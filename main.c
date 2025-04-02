@@ -16,7 +16,10 @@ void print_usage(void) {
     printf("  nix-store --verify <path>         Verify a store path\n");
     printf("  nix-store --gc                    Run garbage collection\n");
     printf("  nix-store --query-references <path> Show references of a path\n");
+    printf("  nix-store --daemon                Start the resource manager service\n");
 }
+
+extern int init_resource_manager(void);  // Declaration from nix_store_mgr.c
 
 int main(int argc, char* argv[]) {
     if (argc < 2) {
@@ -94,6 +97,10 @@ int main(int argc, char* argv[]) {
         
         printf("No references found or path does not exist.\n");
         return 1;
+    }
+    else if (strcmp(argv[1], "--daemon") == 0) {
+        printf("Starting Nix store resource manager...\n");
+        return init_resource_manager();
     }
     else {
         printf("Unknown command: %s\n", argv[1]);

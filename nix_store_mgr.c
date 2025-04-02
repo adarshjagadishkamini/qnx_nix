@@ -13,10 +13,44 @@ static resmgr_connect_funcs_t connect_funcs;
 static resmgr_io_funcs_t io_funcs;
 static iofunc_attr_t attr;
 
+// Custom open handler for the Nix store
+int nix_store_open(resmgr_context_t *ctp, io_open_t *msg, iofunc_attr_t *handle, void *extra) {
+    // Implement custom open logic for store paths
+    return iofunc_open_default(ctp, msg, handle, extra);
+}
+
+// Custom read handler for the Nix store
+int nix_store_read(resmgr_context_t *ctp, io_read_t *msg, iofunc_ocb_t *ocb) {
+    // Implement custom read logic for store paths
+    return iofunc_read_default(ctp, msg, ocb);
+}
+
+// Custom write handler to prevent writes to immutable store
+int nix_store_write(resmgr_context_t *ctp, io_write_t *msg, iofunc_ocb_t *ocb) {
+    int status;
+    
+    // Verify this is a valid write request
+    if ((status = iofunc_write_verify(ctp, msg, ocb, NULL)) != EOK)
+        return status;
+    
+    // Check extended message type
+    if ((msg->i.xtype & _IO_XTYPE_MASK) != _IO_XTYPE_NONE)
+        return ENOSYS;
+    
+    // Set write nbytes to 0 since we're not allowing writes (store is immutable)
+    _IO_SET_WRITE_NBYTES(ctp, 0);
+    
+    // Return read-only filesystem error
+    return EROFS;
+}
+
 // Initialize the resource manager
 int init_resource_manager(void) {
+    dispatch_t *dpp;
+    dispatch_context_t *ctp;
+    
     // Set up the dispatch interface
-    dispatch_t *dpp = dispatch_create();
+    dpp = dispatch_create();
     if (dpp == NULL) {
         fprintf(stderr, "Unable to create dispatch interface: %s\n", strerror(errno));
         return -1;
@@ -30,9 +64,9 @@ int init_resource_manager(void) {
                       _RESMGR_IO_NFUNCS, &io_funcs);
                       
     // Override specific functions if needed
-    connect_funcs.open = iofunc_open_default;
-    io_funcs.read = iofunc_read_default;
-    io_funcs.write = iofunc_write_default;
+    connect_funcs.open = nix_store_open;
+    io_funcs.read = nix_store_read;
+    io_funcs.write = nix_store_write;
     
     // Attach the resource manager
     resmgr_attach(dpp, NULL, "/dev/nix-store", _FTYPE_ANY, 0, 
@@ -40,6 +74,10 @@ int init_resource_manager(void) {
     
     // Start the resource manager
     ctp = dispatch_context_alloc(dpp);
+    if (ctp == NULL) {
+        fprintf(stderr, "Unable to allocate dispatch context: %s\n", strerror(errno));
+        return -1;
+    }
     
     // Block and handle messages
     while (1) {
@@ -55,23 +93,4 @@ int init_resource_manager(void) {
     dispatch_context_free(ctp);
     
     return 0;
-}
-
-// Custom open handler for the Nix store
-int nix_store_open(resmgr_context_t *ctp, io_open_t *msg, RESMGR_HANDLE_T *handle, void *extra) {
-    // Implement custom open logic for store paths
-    return iofunc_open_default(ctp, msg, handle, extra);
-}
-
-// Custom read handler for the Nix store
-int nix_store_read(resmgr_context_t *ctp, io_read_t *msg, RESMGR_OCB_T *ocb) {
-    // Implement custom read logic for store paths
-    return iofunc_read_default(ctp, msg, ocb);
-}
-
-// Custom write handler to prevent writes to immutable store
-int nix_store_write(resmgr_context_t *ctp, io_write_t *msg, RESMGR_OCB_T *ocb) {
-    // Return an error as the store is immutable
-    _io_set_write_nbytes(ctp, 0);
-    return EROFS;
 }
