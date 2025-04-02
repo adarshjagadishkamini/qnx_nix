@@ -3,6 +3,8 @@
  */
 #include "nix_store.h"
 #include "sha256.h"
+#include <limits.h>
+#include <fcntl.h>
 
 // Initialize the store directory structure
 int store_init(void) {
@@ -153,6 +155,10 @@ int add_to_store(const char* source_path, const char* name, int recursive) {
     // Make the store path read-only
     make_store_path_read_only(store_path);
     
+    // Register this path in the database
+    const char* references[] = {NULL}; // No references for now
+    db_register_path(store_path, references);
+    
     free(store_path);
     return 0;
 }
@@ -181,7 +187,10 @@ int verify_store_path(const char* path) {
         return -1;
     }
     
-    // Additional checks could be implemented here
+    // Check if the path is registered in the database
+    if (!db_path_exists(path)) {
+        return -1;
+    }
     
     return 0;
 }

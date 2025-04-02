@@ -9,10 +9,13 @@
 #include <unistd.h>
 #include <sys/stat.h>
 #include <sys/mman.h>
+#include <time.h>
+#include <limits.h>
 #include "nix_store.h"
 
 // Define the database file path
 #define DB_PATH NIX_STORE_PATH "/.nix-db/db"
+#define ROOTS_PATH NIX_STORE_PATH "/.nix-db/roots"
 
 // Structure for database entries
 typedef struct {
@@ -24,6 +27,18 @@ typedef struct {
 
 // Open the database file
 static FILE* open_db(const char* mode) {
+    // Make sure the directory exists first
+    struct stat st = {0};
+    char dir[PATH_MAX];
+    snprintf(dir, PATH_MAX, NIX_STORE_PATH "/.nix-db");
+    
+    if (stat(dir, &st) == -1) {
+        if (mkdir(dir, 0755) == -1) {
+            fprintf(stderr, "Failed to create database directory: %s\n", strerror(errno));
+            return NULL;
+        }
+    }
+    
     return fopen(DB_PATH, mode);
 }
 
@@ -33,6 +48,12 @@ int db_register_path(const char* path, const char** references) {
     if (!db) {
         fprintf(stderr, "Failed to open database: %s\n", strerror(errno));
         return -1;
+    }
+    
+    // Check if the path already exists
+    if (db_path_exists(path)) {
+        fclose(db);
+        return 0;  // Already registered
     }
     
     // Create a new entry
@@ -60,6 +81,16 @@ int db_register_path(const char* path, const char** references) {
     }
     
     fclose(db);
+    
+    // Add to roots if this is a top-level store item
+    if (strstr(path, "/nix/store/") == path) {
+        FILE* roots = fopen(ROOTS_PATH, "a+");
+        if (roots) {
+            fprintf(roots, "%s\n", path);
+            fclose(roots);
+        }
+    }
+    
     return 0;
 }
 
@@ -101,6 +132,15 @@ char** db_get_references(const char* path) {
             
             for (int i = 0; i < entry.ref_count; i++) {
                 refs[i] = strdup(entry.references[i]);
+                if (!refs[i]) {
+                    // Memory allocation failed, free allocated memory so far
+                    for (int j = 0; j < i; j++) {
+                        free(refs[j]);
+                    }
+                    free(refs);
+                    fclose(db);
+                    return NULL;
+                }
             }
             refs[entry.ref_count] = NULL;  // Null-terminate the array
             
@@ -145,6 +185,31 @@ int db_remove_path(const char* path) {
     if (rename(temp_path, DB_PATH) == -1) {
         fprintf(stderr, "Failed to update database: %s\n", strerror(errno));
         return -1;
+    }
+    
+    // Also remove from roots if present
+    FILE* roots = fopen(ROOTS_PATH, "r");
+    if (roots) {
+        FILE* temp_roots = fopen(ROOTS_PATH ".tmp", "w");
+        if (temp_roots) {
+            char line[PATH_MAX];
+            while (fgets(line, PATH_MAX, roots)) {
+                // Remove newline if present
+                size_t len = strlen(line);
+                if (len > 0 && line[len-1] == '\n') {
+                    line[len-1] = '\0';
+                }
+                
+                if (strcmp(line, path) != 0) {
+                    fprintf(temp_roots, "%s\n", line);
+                }
+            }
+            fclose(temp_roots);
+            fclose(roots);
+            rename(ROOTS_PATH ".tmp", ROOTS_PATH);
+        } else {
+            fclose(roots);
+        }
     }
     
     return 0;
