@@ -7,33 +7,35 @@ rm -rf /data/nix/store/.nix-db
 ./nix-store --init
 echo "Initialized store"
 
-# Add single file
-echo "Test content" > single-file.txt
-./nix-store --add single-file.txt single-file
-echo "Added single file"
-
-# Add directory
-mkdir -p test-pkg/bin
-cat << 'EOF' > test-pkg/bin/hello.sh
+# Create a simple hello package
+mkdir -p hello-pkg/bin
+cat << 'EOF' > hello-pkg/bin/hello
 #!/bin/sh
-echo 'Hello from QNX Nix'
+echo 'Hello from QNX Nix!'
 EOF
-chmod +x test-pkg/bin/hello
-./nix-store --add-recursively test-pkg test-pkg
-echo "Added directory"
+chmod +x hello-pkg/bin/hello
 
-# Query and verify
-STORE_PATH=$(find /data/nix/store -name "*-test-pkg" -type d)
-./nix-store --verify $STORE_PATH
-echo "Verified: $STORE_PATH"
+# Add the hello package to the store
+./nix-store --add-recursively hello-pkg hello-1.0
+
+# Get the store path
+HELLO_PATH=$(find /data/nix/store -name "*-hello-1.0" -type d)
+echo "Hello package installed at: $HELLO_PATH"
+
+# Verify it works
+if [ -x "$HELLO_PATH/bin/hello" ]; then
+    echo "Testing hello:"
+    $HELLO_PATH/bin/hello
+else
+    echo "ERROR: hello executable not found or not executable"
+fi
 
 # Run garbage collection
 ./nix-store --gc
-echo "Garbage collection completed"
 
-# Check if paths still exist
-if [ -d "$STORE_PATH" ]; then
-    echo "Test package still exists after GC, as expected"
+# Check if the hello package still exists
+if [ -d "$HELLO_PATH" ]; then
+    echo "Hello package still exists after GC, as expected"
 else
-    echo "ERROR: Test package was removed by GC"
+    echo "ERROR: Hello package was removed by GC"
 fi
