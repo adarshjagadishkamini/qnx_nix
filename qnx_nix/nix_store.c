@@ -5,6 +5,7 @@
 #include "sha256.h"
 #include <limits.h>
 #include <fcntl.h>
+#include "nix_store_db.h"
 
 // Initialize the store directory structure
 int store_init(void) {
