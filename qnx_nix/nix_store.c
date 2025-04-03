@@ -9,30 +9,30 @@
 
 // Initialize the store directory structure
 int store_init(void) {
-    // Create the main store directory if it doesn't exist
-    struct stat st = {0};
+    // Create the path hierarchy
+    const char* path_parts[] = {"/data", "/data/nix", "/data/nix/store"};
     
-    if (stat(NIX_STORE_PATH, &st) == -1) {
-        // Use QNX-specific permission bits if needed
-        if (mkdir(NIX_STORE_PATH, 0755) == -1) {
-            fprintf(stderr, "Failed to create store directory: %s\n", strerror(errno));
-            return -1;
-        }
-        
-        // Set special QNX attributes for the store directory
-        if (chmod(NIX_STORE_PATH, 0755) == -1) {
-            fprintf(stderr, "Failed to set permissions: %s\n", strerror(errno));
-            return -1;
+    
+    for (int i = 0; i < 3; i++) {
+        struct stat st = {0};
+        if (stat(path_parts[i], &st) == -1) {
+            if (mkdir(path_parts[i], 0755) == -1) {
+                fprintf(stderr, "Failed to create directory %s: %s\n", 
+                        path_parts[i], strerror(errno));
+                return -1;
+            }
         }
     }
     
-    // Create database directory for the store
+    // Create database directory
     char db_path[PATH_MAX];
     snprintf(db_path, PATH_MAX, "%s/.nix-db", NIX_STORE_PATH);
     
+    struct stat st = {0};
     if (stat(db_path, &st) == -1) {
         if (mkdir(db_path, 0755) == -1) {
-            fprintf(stderr, "Failed to create database directory: %s\n", strerror(errno));
+            fprintf(stderr, "Failed to create database directory: %s\n", 
+                    strerror(errno));
             return -1;
         }
     }
