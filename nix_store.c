@@ -12,7 +12,6 @@ int store_init(void) {
     // Create the path hierarchy
     const char* path_parts[] = {"/data", "/data/nix", "/data/nix/store"};
     
-    
     for (int i = 0; i < 3; i++) {
         struct stat st = {0};
         if (stat(path_parts[i], &st) == -1) {
