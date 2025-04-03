@@ -84,7 +84,7 @@ int db_register_path(const char* path, const char** references) {
     fclose(db);
     
     // Add to roots if this is a top-level store item
-    if (strstr(path, "/nix/store/") == path) {
+    if (strstr(path, NIX_STORE_PATH) == path) {
         FILE* roots = fopen(ROOTS_PATH, "a+");
         if (roots) {
             fprintf(roots, "%s\n", path);
