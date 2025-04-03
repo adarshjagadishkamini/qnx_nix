@@ -12,6 +12,7 @@
 #include <time.h>
 #include <limits.h>
 #include "nix_store.h"
+#include "nix_store_db.h"
 
 // Define the database file path
 #define DB_PATH NIX_STORE_PATH "/.nix-db/db"

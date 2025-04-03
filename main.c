@@ -6,6 +6,7 @@
 #include <string.h>
 #include <unistd.h>
 #include "nix_store.h"
+#include "nix_store_db.h"
 
 void print_usage(void) {
     printf("Nix-like store for QNX\n");
