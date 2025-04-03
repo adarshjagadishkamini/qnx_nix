@@ -19,7 +19,7 @@
 #include "sha256.h"        // Our custom SHA-256 implementation
 
 // Define the base store path
-#define NIX_STORE_PATH "/fs/nix/store"
+#define NIX_STORE_PATH "/data/nix/store"
 
 // Structure to represent a store path
 typedef struct {
