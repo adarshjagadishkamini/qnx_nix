@@ -7,6 +7,7 @@
 #include <fcntl.h>
 #include <dirent.h> // <-- Added this in previous step for add_boot_libraries
 #include "nix_store_db.h"
+#include <ctype.h>
 
 // Define NIX_STORE_PATH if not defined in nix_store.h
 #ifndef NIX_STORE_PATH
@@ -179,18 +180,25 @@ int add_to_store_with_deps(const char* source_path, const char* name, const char
     if (stat(store_path, &store_st) == 0) {
         // Path already exists in the store
         printf("Path %s already exists in store.\n", store_path);
-        free(store_path);
+
+        // Register dependencies even if path exists (idempotency)
+        // DO THIS *BEFORE* freeing store_path
+        if (deps_count > 0 && dep_store_paths != NULL) { // Ensure deps_count > 0 and paths allocated
+             db_register_path(store_path, (const char**)dep_store_paths);
+             // Note: db_register_path should ideally handle potential duplicate registrations gracefully.
+        }
+
+        // Now free the resources
+        free(store_path); // Free store_path AFTER potentially using it in db_register_path
         if (dep_store_paths) {
             for (int i = 0; i < deps_count; i++) {
-                free(dep_store_paths[i]);
+                if (dep_store_paths[i]) { // Check pointer before freeing
+                   free(dep_store_paths[i]);
+                }
             }
             free(dep_store_paths);
         }
-        // Register dependencies even if path exists (idempotency)
-        if (deps_count > 0) {
-             db_register_path(store_path, (const char**)dep_store_paths);
-        }
-        return 0;
+        return 0; // Return success, path existed
     }
 
     // Create the directory for the store item
