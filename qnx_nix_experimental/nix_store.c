@@ -1,11 +1,11 @@
 /*
  * nix_store.c - Core implementation of Nix-like store for QNX
  */
-#include "nix_store.h" // Includes stdio, stdlib, string, sys/stat, sys/types, unistd, errno
+#include "nix_store.h" // already includes stdio, stdlib, string, sys/stat, sys/types, unistd, errno
 #include "sha256.h"
 #include <limits.h>
 #include <fcntl.h>
-#include <dirent.h> // <-- Added this in previous step for add_boot_libraries
+#include <dirent.h> 
 #include "nix_store_db.h"
 #include <ctype.h>
 
@@ -580,8 +580,7 @@ int scan_dependencies(const char* exec_path, char*** deps_out) {
 
 
 // Add /proc/boot libraries to store
-// (Code from file content_fetcher.fetch: qnx_nix_experimental/nix_store.c)
-// Requires #include <dirent.h> at the top
+
 int add_boot_libraries(void) {
     DIR* dir = opendir("/proc/boot");
     if (!dir) {
