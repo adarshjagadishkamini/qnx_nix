@@ -1,6 +1,6 @@
-/*
- * nix_store.c - Core implementation of Nix-like store for QNX
- */
+
+//nix_store.c - Core implementation of Nix-like store for QNX
+
 #include "nix_store.h" // already includes stdio, stdlib, string, sys/stat, sys/types, unistd, errno
 #include "sha256.h"
 #include <limits.h>
@@ -117,7 +117,7 @@ int add_to_store_with_deps(const char* source_path, const char* name, const char
 
         for (int i = 0; i < deps_count; i++) {
             // First check if the dependency already exists in store
-            // This check is simplified - a real implementation would query the DB more robustly
+            // simplified check to see if the dependency already exists in the store
             // Assuming deps[i] is already a store path or needs to be added
              struct stat dep_st;
              if (stat(deps[i], &dep_st) != 0 || strncmp(deps[i], NIX_STORE_PATH, strlen(NIX_STORE_PATH)) != 0) {
@@ -295,12 +295,10 @@ int add_to_store_with_deps(const char* source_path, const char* name, const char
 
 
 // Add a file or directory to the store
-// (Code from file content_fetcher.fetch: qnx_nix_experimental/nix_store.c)
 int add_to_store(const char* source_path, const char* name, int recursive) {
     struct stat st;
     if (stat(source_path, &st) == -1) {
-        // If source is a broken symlink, stat might fail. Handle this?
-        // For now, treat as error.
+        // Check if the source path exists and is accessible
         fprintf(stderr, "Source path does not exist or is inaccessible: %s (%s)\n", source_path, strerror(errno));
         return -1;
     }
@@ -315,7 +313,7 @@ int add_to_store(const char* source_path, const char* name, int recursive) {
     struct stat store_st;
     if (stat(store_path, &store_st) == 0) {
         // Path already exists in the store
-        printf("Path %s already exists in store.\n", store_path);
+        printf("Path %s already exists in store.\n\n", store_path);
         free(store_path);
         return 0; // Indicate success, path already present
     }
