@@ -1,0 +1,143 @@
+/*
+ * nix_store_mgr.c - Minimal QNX Resource Manager for Nix store
+ * Implemented as a regular (read-only) file to mimic the nix daemon interface.
+ */
+
+ #include <stdio.h>
+ #include <stdlib.h>
+ #include <string.h>
+ #include <errno.h>
+ #include <sys/iofunc.h>
+ #include <sys/dispatch.h>
+ #include <sys/stat.h>
+ #include <fcntl.h>
+ #include <dirent.h>
+ #include <limits.h>
+ #include <unistd.h>
+ #include "nix_store.h" 
+ 
+ // Macro for minimum value
+ #define MIN(a,b) (((a) < (b)) ? (a) : (b))
+ 
+ // Global structures for resource manager functions and attributes
+ static resmgr_connect_funcs_t connect_funcs;
+ static resmgr_io_funcs_t io_funcs;
+ static iofunc_attr_t attr;
+ 
+ // Logging function to write messages to a log file
+ void log_message(const char *message) {
+     FILE *log = fopen("/data/log/nix_daemon.log", "a");
+     if (log) {
+         fprintf(log, "%s\n", message);
+         fclose(log);
+     }
+ }
+ 
+ // Open handler: verifies the store path exists
+ int nix_store_open(resmgr_context_t *ctp, io_open_t *msg, iofunc_attr_t *handle, void *extra) {
+     char resolved_path[PATH_MAX];
+     // Resolve the full path relative to the store directory
+     snprintf(resolved_path, sizeof(resolved_path), "/data/nix/store/%s", msg->connect.path);
+     
+     struct stat st;
+     if (stat(resolved_path, &st) == -1) {
+         return errno;
+     }
+     
+     log_message("File opened via resource manager");
+     return iofunc_open_default(ctp, msg, handle, extra);
+ }
+ 
+ // Read handler: returns the contents of the store directory as a plain text listing.
+ // Uses ocb->offset to support sequential reading.
+ int nix_store_read(resmgr_context_t *ctp, io_read_t *msg, iofunc_ocb_t *ocb) {
+     // Generate the listing from the store directory
+     DIR *dir = opendir("/data/nix/store");
+     if (!dir)
+         return errno;
+ 
+     struct dirent *entry;
+     char buffer[2048];
+     int off = 0;
+     while ((entry = readdir(dir)) != NULL) {
+         // Skip the standard entries
+         if (strcmp(entry->d_name, ".") == 0 || strcmp(entry->d_name, "..") == 0)
+             continue;
+         off += snprintf(buffer + off, sizeof(buffer) - off, "%s\n", entry->d_name);
+     }
+     closedir(dir);
+ 
+     int total_len = off;
+     // Use the file pointer stored in ocb->offset for sequential reading.
+     if (ocb->offset >= total_len)
+         return 0; // End of file
+ 
+     int bytes_available = total_len - ocb->offset;
+     int nbytes = MIN(msg->i.nbytes, bytes_available);
+ 
+     SETIOV(ctp->iov, buffer + ocb->offset, nbytes);
+ 
+     // Advance the offset
+     ocb->offset += nbytes;
+ 
+     return _RESMGR_NPARTS(1);
+ }
+ 
+ // Write handler: The store is immutable, so we always return an error.
+ int nix_store_write(resmgr_context_t *ctp, io_write_t *msg, iofunc_ocb_t *ocb) {
+     return EROFS; // Read-only file system error
+ }
+ 
+ // Initialization of the resource manager and the main event loop
+ int init_resource_manager(void) {
+     // Daemonize the process: fork, setsid, change directory, etc.
+     pid_t pid = fork();
+     if (pid < 0) return -1;
+     if (pid > 0)
+         exit(0);  // Parent process exits
+ 
+     setsid();
+     chdir("/");
+     umask(0);
+     close(STDIN_FILENO);
+     close(STDOUT_FILENO);
+     close(STDERR_FILENO);
+ 
+     // Create dispatch structure for managing I/O requests
+     dispatch_t *dpp = dispatch_create();
+     if (!dpp)
+         return -1;
+ 
+     // Initialize resource attributes as a regular file with read-only permissions.
+     // This makes the node behave more like the file interface expected by nix.
+     iofunc_attr_init(&attr, S_IFREG | 0444, 0, 0);
+ 
+     // Initialize connection and I/O function tables
+     iofunc_func_init(_RESMGR_CONNECT_NFUNCS, &connect_funcs, _RESMGR_IO_NFUNCS, &io_funcs);
+ 
+     // Assign our custom functions
+     connect_funcs.open = nix_store_open;
+     io_funcs.read = nix_store_read;
+     io_funcs.write = nix_store_write;
+ 
+     // Attach our resource manager at "/dev/nix-store"
+     if (resmgr_attach(dpp, NULL, "/dev/nix-store", _FTYPE_ANY, 0, &connect_funcs, &io_funcs, &attr) == -1) {
+         log_message("Failed to attach resource manager to /dev/nix-store");
+         return -1;
+     }
+     
+     log_message("Nix store daemon started");
+ 
+     // Allocate initial dispatch context and enter the event loop
+     dispatch_context_t *ctp = dispatch_context_alloc(dpp);
+     if (!ctp) {
+         log_message("Failed to allocate dispatch context");
+         return -1;
+     }
+     while ((ctp = dispatch_block(ctp))) {
+         dispatch_handler(ctp);
+     }
+     
+     return 0;
+ }
+ 

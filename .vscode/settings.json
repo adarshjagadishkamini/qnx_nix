@@ -2,6 +2,7 @@
     "files.associations": {
         "fcntl.h": "c",
         "unistd.h": "c",
-        "nix_store.h": "c"
+        "nix_store.h": "c",
+        "stdio.h": "c"
     }
 }
