@@ -385,3 +385,34 @@ int db_remove_root(const char* path) {
          return -1; // Error during file operations
     }
 }
+
+int db_register_profile(const char* profile_name, const char* path) {
+    char profile_path[PATH_MAX];
+    snprintf(profile_path, PATH_MAX, "/data/nix/profiles/%s", profile_name);
+
+    // Add profile directory as a GC root
+    return db_add_root(profile_path);
+}
+
+int db_remove_profile(const char* profile_name) {
+    char profile_path[PATH_MAX];
+    snprintf(profile_path, PATH_MAX, "/data/nix/profiles/%s", profile_name);
+
+    // Remove profile directory from GC roots
+    return db_remove_root(profile_path);
+}
+
+char* db_get_profile_path(const char* profile_name) {
+    char* path = malloc(PATH_MAX);
+    if (!path) return NULL;
+
+    snprintf(path, PATH_MAX, "/data/nix/profiles/%s", profile_name);
+    
+    struct stat st;
+    if (stat(path, &st) == 0 && S_ISDIR(st.st_mode)) {
+        return path;
+    }
+
+    free(path);
+    return NULL;
+}

@@ -1,0 +1,171 @@
+QNX Nix Store Package Installation Process
+========================================
+
+When installing a program (like 'sl') into the Nix store and making it available through a profile, several steps occur:
+
+1. File Storage Structure
+------------------------
+/data/nix/
+├── store/                    # Store directory containing all packages and libraries
+│   ├── <hash>-libc.so.6     # Boot libraries copied and hashed
+│   ├── <hash>-libncurses... # More boot libraries
+│   └── <hash>-sl-program/   # The sl program directory
+│       └── bin/             # Contains the actual executable
+│           └── sl
+└── profiles/                 # User profiles directory
+    ├── default/             # A profile (symlink to store)
+    │   └── bin/            # Profile bin directory
+    │       └── sl          # Wrapper script
+    └── current -> default  # Current profile symlink
+
+2. Installation Process
+------------------------
+a) Store Initialization
+   - Creates /data/nix/{store,profiles} directories
+   - Sets up database in /data/nix/store/.nix-db/
+
+b) Boot Library Addition
+   - Scans /proc/boot for system libraries
+   - Copies each library to store with a unique hash
+   - Registers libraries in database
+
+c) Program Addition (add-with-deps)
+   - Scans program dependencies using 'ldd'
+   - Maps each /proc/boot/* dependency to its store path
+   - Creates program directory in store with 'bin' subdirectory
+   - Copies executable to bin/ subdirectory
+   - Registers program and its dependencies in database
+
+d) Profile Creation
+   - Creates profile directory structure
+   - Registers profile in store database
+   - Creates symlink from /data/nix/profiles/<name>
+
+e) Program Installation to Profile
+   - Creates bin/ directory in profile if needed
+   - Creates wrapper script instead of direct symlink
+   - Wrapper script sets up LD_LIBRARY_PATH with all dependencies
+
+3. Wrapper Script Generation
+---------------------------
+The wrapper script (/data/nix/profiles/default/bin/sl) looks like:
+```
+#!/bin/sh
+# Wrapper for /data/nix/store/<hash>-sl-program/bin/sl
+
+export LD_LIBRARY_PATH="/data/nix/store/<hash>-libncurses/lib:/data/nix/store/<hash>-libc/lib:..."
+
+exec "/data/nix/store/<hash>-sl-program/bin/sl" "$@"
+```
+
+4. Why This Works
+----------------
+- All files in store are immutable (read-only)
+- Each package has its own directory with all files
+- Dependencies are explicit and versioned
+- Wrapper scripts ensure correct library paths
+- Multiple versions can coexist in store
+- Profiles provide user-specific views
+- Storage is content-addressed (hash-based)
+- Database tracks references for garbage collection
+
+5. Key Benefits
+--------------
+- Reproducible environments
+- No dependency conflicts
+- Multiple versions possible
+- Clean uninstall (just remove profile)
+- Garbage collection of unused packages
+- Profile switching for different environments
+
+When you run 'sl', the process is:
+1. Shell finds wrapper in PATH
+2. Wrapper sets LD_LIBRARY_PATH
+3. Wrapper execs actual program
+4. Program loads with correct libraries
+5. Train appears on screen! 🚂
+
+Common Issues:
+- Missing boot libraries: Run --add-boot-libs first
+- Profile creation: Must be in store database
+- Wrapper permissions: Should be executable
+- Library paths: Check wrapper script
+
+6. Comparison with Real Nix
+--------------------------
+a) Library Path Resolution
+   Real Nix:
+   - Uses rpath (ELF header) for library path encoding
+   - Libraries referenced directly in executable
+   - No LD_LIBRARY_PATH needed
+   - Faster startup (no script interpretation)
+   - More reliable (no environment variables)
+
+   QNX Nix:
+   - Uses wrapper scripts with LD_LIBRARY_PATH
+   - Extra process creation (shell)
+   - Environment variable lookup overhead
+   - Slightly slower startup
+   - More flexible but less deterministic
+
+b) Performance Impact (approximate):
+   Real Nix application start:
+   1. Load executable (1ms)
+   2. Read rpath from ELF (0.1ms)
+   3. Load libraries directly (1-2ms)
+   Total: ~2-3ms
+
+   QNX Nix application start:
+   1. Load shell for wrapper (1ms)
+   2. Parse wrapper script (0.5ms)
+   3. Set environment variables (0.2ms)
+   4. Load executable (1ms)
+   5. Process LD_LIBRARY_PATH (0.5ms)
+   6. Load libraries (1-2ms)
+   Total: ~4-5ms
+
+c) Symlink Structure
+   Real Nix:
+   - Direct symlinks to store paths
+   - No wrapper scripts
+   - Pure content-addressed storage
+   - Immutable references in ELF headers
+
+   QNX Nix:
+   - Wrapper scripts in profile bin/
+   - Symlinks for non-executables
+   - Content-addressed storage with script layer
+   - Dynamic library path resolution
+
+d) Trade-offs
+   Benefits of QNX approach:
+   - Simpler implementation
+   - No ELF manipulation needed
+   - Easy to debug (readable scripts)
+   - More flexible for QNX specifics
+   - Can handle non-ELF executables
+
+   Drawbacks:
+   - Slightly slower startup
+   - Depends on shell
+   - Environment variables can be overridden
+   - More complex debugging of library issues
+
+e) Performance Optimization Possibilities:
+   1. Cache LD_LIBRARY_PATH in a fast-load format
+   2. Use smaller shell (like dash) for wrappers
+   3. Precompile wrapper scripts to shell functions
+   4. Consider limited rpath support where possible
+   5. Implement parallel library loading
+
+f) Real World Impact:
+   - For small utilities: negligible (~2ms difference)
+   - For large applications: still minor (~5-10ms)
+   - Scripts already using shell: no extra overhead
+   - Interactive programs: no noticeable difference
+   - Server applications: should use daemon mode
+
+The performance impact is generally acceptable for most use cases on QNX,
+where deterministic behavior and reliability are often more important than
+millisecond-level startup times.
+```

@@ -11,6 +11,13 @@
 #include <errno.h>
 #include "nix_store.h"
 #include "nix_store_db.h"
+#include <sys/param.h> // For MAXPATHLEN if PATH_MAX is not defined
+
+#ifndef PATH_MAX
+#define PATH_MAX MAXPATHLEN
+#endif
+
+#define PROFILES_DIR "/data/nix/profiles"
 
 // Structure to track path references
 typedef struct PathRef {
@@ -19,16 +26,23 @@ typedef struct PathRef {
     struct PathRef* next;
 } PathRef;
 
+// --- Forward declarations ---
+static void mark_path(PathRef* list, const char* path);
+
 // Add a path to the reference list
 static PathRef* add_path_ref(PathRef* list, const char* path) {
     PathRef* ref = malloc(sizeof(PathRef));
-    if (!ref) return list;
-    
+    if (!ref) {
+         fprintf(stderr, "GC Error: Failed to allocate memory for path reference.\n");
+         // Consider how to handle this - maybe exit? For now, return list.
+        return list;
+    }
+
     strncpy(ref->path, path, PATH_MAX - 1);
     ref->path[PATH_MAX - 1] = '\0';  // Ensure null termination
     ref->mark = 0;
     ref->next = list;
-    
+
     return ref;
 }
 
@@ -44,26 +58,137 @@ static PathRef* find_path_ref(PathRef* list, const char* path) {
     return NULL;
 }
 
+
+// Helper function to extract base store path from a full path inside the store
+// Returns a dynamically allocated string (must be freed!) or NULL on error/not store path.
+static char* extract_base_store_path(const char* full_path) {
+     if (!full_path || strncmp(full_path, NIX_STORE_PATH, strlen(NIX_STORE_PATH)) != 0) {
+         return NULL; // Not a store path
+     }
+
+     const char* start_after_store = full_path + strlen(NIX_STORE_PATH);
+     if (*start_after_store == '/') {
+         start_after_store++; // Skip the slash after /data/nix/store
+     } else {
+          return NULL; // Invalid format? Expecting /data/nix/store/hash-name...
+     }
+
+
+     const char* end_of_base = strchr(start_after_store, '/');
+     size_t base_len;
+     if (end_of_base) {
+         // Path points inside a store directory (e.g., .../hash-name/bin/file)
+         base_len = end_of_base - start_after_store;
+     } else {
+          // Path *is* the store directory (e.g., .../hash-name)
+          base_len = strlen(start_after_store);
+     }
+
+      if (base_len == 0) return NULL; // Empty hash-name?
+
+     // Allocate memory for the base path string: /data/nix/store + / + hash-name + \0
+     char* base_path = malloc(strlen(NIX_STORE_PATH) + 1 + base_len + 1);
+     if (!base_path) {
+          fprintf(stderr, "GC Error: Failed to allocate memory for base path extraction.\n");
+          return NULL;
+     }
+
+     snprintf(base_path, strlen(NIX_STORE_PATH) + 1 + base_len + 1, "%s/%.*s", NIX_STORE_PATH, (int)base_len, start_after_store);
+
+     return base_path;
+}
+
+
 // Mark a path and all its references
 static void mark_path(PathRef* list, const char* path) {
-    // Find the path in our list
-    PathRef* current = find_path_ref(list, path);
-    if (!current || current->mark) {
-        return;  // Path not found or already marked
+    // Ensure path is a valid store path (starts with NIX_STORE_PATH)
+    if (!path || strncmp(path, NIX_STORE_PATH, strlen(NIX_STORE_PATH)) != 0) {
+        fprintf(stderr, "GC Warning: Attempting to mark non-store path: %s\n", path ? path : "(null)");
+        return;
     }
-    
+
+    // Find the base store path in our list
+    PathRef* current = find_path_ref(list, path);
+    if (!current) {
+        // This should ideally not happen if the path came from DB roots or profile scan
+        // If it does, it might mean a broken link or inconsistent state.
+        fprintf(stderr, "GC Warning: Path %s to be marked not found in the initial store list. Skipping.\n", path);
+        return;
+    }
+
+    if (current->mark) {
+        return;  // Already marked
+    }
+
+    // Mark this base store path
+    // printf("  Marking: %s\n", current->path); // Reduce noise, maybe only print roots
     current->mark = 1;
-    
-    // Mark all references
-    char** refs = db_get_references(path);
+
+    // Mark all references (dependencies) of this store path
+    char** refs = db_get_references(current->path);
     if (refs) {
         for (int i = 0; refs[i] != NULL; i++) {
-            mark_path(list, refs[i]);
+            mark_path(list, refs[i]); // Recursive call
             free(refs[i]);
         }
         free(refs);
     }
 }
+
+// Scan a profile directory and mark linked store paths
+static void scan_profile_and_mark(PathRef* list, const char* profile_path) {
+    DIR* dir = opendir(profile_path);
+    if (!dir) {
+        if (errno != ENOENT) { // Don't warn if profile just doesn't exist
+            fprintf(stderr, "GC Warning: Cannot open profile directory %s: %s\n", profile_path, strerror(errno));
+        }
+        return;
+    }
+
+    // printf("Scanning profile: %s\n", profile_path); // Reduce noise
+
+    struct dirent* entry;
+    char item_path[PATH_MAX];
+    char target_path[PATH_MAX];
+
+    while ((entry = readdir(dir)) != NULL) {
+        if (strcmp(entry->d_name, ".") == 0 || strcmp(entry->d_name, "..") == 0) {
+            continue;
+        }
+
+        snprintf(item_path, PATH_MAX, "%s/%s", profile_path, entry->d_name);
+
+        struct stat st;
+        if (lstat(item_path, &st) == -1) {
+             fprintf(stderr, "GC Warning: Cannot lstat profile item %s: %s\n", item_path, strerror(errno));
+            continue;
+        }
+
+        if (S_ISLNK(st.st_mode)) {
+            ssize_t len = readlink(item_path, target_path, sizeof(target_path) - 1);
+            if (len != -1) {
+                target_path[len] = '\0';
+
+                // Extract the base store path from the target
+                char* base_store_path = extract_base_store_path(target_path);
+                if (base_store_path) {
+                    // printf("  Found link to store: %s -> %s (Base: %s)\n", item_path, target_path, base_store_path); // Debug
+                    mark_path(list, base_store_path); // Mark the base path
+                    free(base_store_path); // Free the extracted path
+                }
+                 // else: symlink target is not in the store, ignore for GC
+            } else {
+                 fprintf(stderr, "GC Warning: Cannot readlink profile symlink %s: %s\n", item_path, strerror(errno));
+            }
+        } else if (S_ISDIR(st.st_mode)) {
+            // Recursively scan subdirectories (bin, lib, etc.)
+            scan_profile_and_mark(list, item_path);
+        }
+    }
+
+    closedir(dir);
+}
+
 
 // Free the PathRef list
 static void free_path_refs(PathRef* list) {
@@ -76,75 +201,122 @@ static void free_path_refs(PathRef* list) {
 
 // Collect garbage in the Nix store
 int gc_collect_garbage(void) {
-    // Build a list of all paths in the store
+    printf("Starting garbage collection...\n");
+    // Build a list of all paths currently existing in the store directory
     PathRef* paths = NULL;
-    
-    DIR* dir = opendir(NIX_STORE_PATH);
-    if (!dir) {
-        fprintf(stderr, "Failed to open store directory: %s\n", strerror(errno));
+    int path_count = 0;
+
+    DIR* store_dir = opendir(NIX_STORE_PATH);
+    if (!store_dir) {
+        fprintf(stderr, "Failed to open store directory %s: %s\n", NIX_STORE_PATH, strerror(errno));
         return -1;
     }
-    
+
     struct dirent* entry;
-    while ((entry = readdir(dir)) != NULL) {
-        // Skip "." and ".." entries
-        if (strcmp(entry->d_name, ".") == 0 || 
+    while ((entry = readdir(store_dir)) != NULL) {
+        if (strcmp(entry->d_name, ".") == 0 ||
             strcmp(entry->d_name, "..") == 0 ||
-            strcmp(entry->d_name, ".nix-db") == 0) {
+            strcmp(entry->d_name, ".nix-db") == 0) { // Ignore DB dir
             continue;
         }
-        
+
         char full_path[PATH_MAX];
         snprintf(full_path, PATH_MAX, "%s/%s", NIX_STORE_PATH, entry->d_name);
-        
-        paths = add_path_ref(paths, full_path);
+
+        struct stat st_path;
+        if (stat(full_path, &st_path) == 0 && S_ISDIR(st_path.st_mode)) {
+             paths = add_path_ref(paths, full_path);
+             path_count++;
+        } else {
+             fprintf(stderr,"GC Warning: Non-directory item found in store root: %s\n", entry->d_name);
+        }
     }
-    
-    closedir(dir);
-    
-    // Mark all roots and their dependencies
+    closedir(store_dir);
+    printf("Found %d potential store paths in filesystem.\n", path_count);
+
+    // --- Mark Phase ---
+    printf("Marking roots...\n");
+    // 1. Mark roots from the database roots file
     FILE* roots_file = fopen(NIX_STORE_PATH "/.nix-db/roots", "r");
     if (roots_file) {
         char root[PATH_MAX];
         while (fgets(root, PATH_MAX, roots_file)) {
-            // Remove newline if present
             size_t len = strlen(root);
             if (len > 0 && root[len-1] == '\n') {
                 root[len-1] = '\0';
             }
-            
-            mark_path(paths, root);
+             if (strlen(root) > 0) { // Ensure not empty line
+                printf("  Marking root from DB: %s\n", root);
+                mark_path(paths, root);
+            }
         }
         fclose(roots_file);
+    } else {
+         // Don't warn if file doesn't exist, it's optional
+         if (errno != ENOENT) {
+             fprintf(stderr, "GC Warning: Could not read roots file %s: %s\n", NIX_STORE_PATH "/.nix-db/roots", strerror(errno));
+         } else {
+              printf("  No roots file found. Skipping DB roots.\n");
+         }
     }
-    
-    // Delete unmarked paths
+
+    // 2. Mark roots derived from scanning profiles
+    printf("Marking roots from profiles in %s...\n", PROFILES_DIR);
+    DIR* profiles_root_dir = opendir(PROFILES_DIR);
+    if (profiles_root_dir) {
+        struct dirent* profile_entry;
+        char profile_path[PATH_MAX];
+        while ((profile_entry = readdir(profiles_root_dir)) != NULL) {
+             if (strcmp(profile_entry->d_name, ".") == 0 || strcmp(profile_entry->d_name, "..") == 0) {
+                continue;
+            }
+            snprintf(profile_path, PATH_MAX, "%s/%s", PROFILES_DIR, profile_entry->d_name);
+             struct stat st_profile;
+             // Follow symlink if profile itself is a link (like profiles/default -> profiles/default-N)
+             if (stat(profile_path, &st_profile) == 0 && S_ISDIR(st_profile.st_mode)) {
+                  printf("  Scanning profile directory: %s\n", profile_path);
+                  scan_profile_and_mark(paths, profile_path); // Scan this profile directory
+             }
+        }
+         closedir(profiles_root_dir);
+    } else {
+         // Don't warn if dir doesn't exist
+         if (errno != ENOENT) {
+             fprintf(stderr, "GC Warning: Could not open profiles directory %s: %s\n", PROFILES_DIR, strerror(errno));
+         } else {
+             printf("  Profiles directory not found. Skipping profile scan.\n");
+         }
+    }
+
+    // --- Sweep Phase ---
+    printf("Sweeping unmarked paths...\n");
     PathRef* current = paths;
     int removed_count = 0;
-    
+
     while (current) {
         if (!current->mark) {
             printf("Removing unused path: %s\n", current->path);
-            
-            // Recursive removal of the directory
+
+            // Recursive removal using system rm -rf
             char cmd[PATH_MAX + 10];
             snprintf(cmd, sizeof(cmd), "rm -rf %s", current->path);
-            if (system(cmd) == 0) {
-                // Remove from database only if successfully deleted
+            int ret = system(cmd);
+            if (ret == 0) {
+                // Remove from database only if successfully deleted from filesystem
                 db_remove_path(current->path);
                 removed_count++;
             } else {
-                fprintf(stderr, "Failed to remove path: %s\n", current->path);
+                fprintf(stderr, "Failed to remove path from filesystem: %s (system rm -rf returned %d)\n", current->path, ret);
+                // DO NOT remove from DB if filesystem removal failed
             }
         }
-        
         current = current->next;
     }
-    
+
     printf("Garbage collection complete. Removed %d unused paths.\n", removed_count);
-    
+
     // Free the path list
     free_path_refs(paths);
-    
+
     return 0;
 }
