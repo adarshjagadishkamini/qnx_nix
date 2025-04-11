@@ -26,6 +26,9 @@ void print_usage(void) {
     printf("  nix-store --create-profile <name>       Create a new profile\n");
     printf("  nix-store --switch-profile <name>       Switch the current profile\n");
     printf("  nix-store --list-profiles               List available profiles\n");
+    printf("  nix-store --rollback <profile>          Rollback to previous generation\n");
+    printf("  nix-store --list-generations <profile>  List available generations\n");
+    printf("  nix-store --switch-generation <profile> <timestamp> Switch to specific generation\n");
 }
 
 // Declaration for resource manager (optional, if built)
@@ -219,6 +222,37 @@ int main(int argc, char* argv[]) {
             return 0;
         }
         return 1;
+    }
+    else if (strcmp(argv[1], "--rollback") == 0) {
+        if (argc < 3) {
+            fprintf(stderr, "Error: Missing profile name for rollback\n");
+            return 1;
+        }
+        return rollback_profile(argv[2]);
+    }
+    else if (strcmp(argv[1], "--list-generations") == 0) {
+        if (argc < 3) {
+            fprintf(stderr, "Error: Missing profile name\n");
+            return 1;
+        }
+        time_t* timestamps;
+        int count;
+        if (get_profile_generations(argv[2], &timestamps, &count) == 0) {
+            printf("Available generations for profile '%s':\n", argv[2]);
+            for (int i = 0; i < count; i++) {
+                printf("  %ld: %s", timestamps[i], ctime(&timestamps[i]));
+            }
+            free(timestamps);
+            return 0;
+        }
+        return 1;
+    }
+    else if (strcmp(argv[1], "--switch-generation") == 0) {
+        if (argc < 4) {
+            fprintf(stderr, "Error: Missing profile name or timestamp\n");
+            return 1;
+        }
+        return switch_profile_generation(argv[2], atol(argv[3]));
     }
     else {
         fprintf(stderr,"Unknown command: %s\n", argv[1]);

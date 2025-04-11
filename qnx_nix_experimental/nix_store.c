@@ -684,27 +684,55 @@ int scan_dependencies(const char* exec_path, char*** deps_out) {
  // Install a store path into a profile
  int install_to_profile(const char* store_path, const char* profile_name) {
      printf("Installing %s into profile '%s'\n", store_path, profile_name);
-     int ret_val; // For snprintf return checks
- 
-     // 1. Verify store path exists and is in the database
-     struct stat st_store;
-     if (stat(store_path, &st_store) != 0 || !S_ISDIR(st_store.st_mode)) {
-         fprintf(stderr, "Error: Store path %s not found or not a directory.\n", store_path);
-         return -1;
-     }
-     if (!db_path_exists(store_path)) {
-          fprintf(stderr, "Error: Store path %s not registered in database.\n", store_path);
-          return -1;
-     }
- 
-     // 2. Construct profile path
+     int ret_val;
+     time_t current_time = time(NULL);
+
+     // 1. First backup existing profile if it exists
      char profile_path[PATH_MAX];
+     char backup_path[PATH_MAX];
+     
      ret_val = snprintf(profile_path, PATH_MAX, "/data/nix/profiles/%s", profile_name);
      if (ret_val < 0 || ret_val >= PATH_MAX) {
-          fprintf(stderr, "Error: Profile path too long for profile name '%s'.\n", profile_name);
-          return -1;
+         fprintf(stderr, "Error: Profile path too long\n");
+         return -1;
      }
- 
+     
+     ret_val = snprintf(backup_path, PATH_MAX, "/data/nix/profiles/%s-%ld", profile_name, current_time);
+     if (ret_val < 0 || ret_val >= PATH_MAX) {
+         fprintf(stderr, "Error: Backup path too long\n");
+         return -1;
+     }
+
+     struct stat st_profile;
+     if (stat(profile_path, &st_profile) == 0) {
+         // Existing profile found, create a backup generation
+         char cp_cmd[PATH_MAX * 3];
+         snprintf(cp_cmd, sizeof(cp_cmd), "cp -rP %s/. %s/", profile_path, backup_path);
+         if (system(cp_cmd) != 0) {
+             fprintf(stderr, "Failed to create generation backup: %s\n", strerror(errno));
+             return -1;
+         }
+         printf("Created new generation backup: %s\n", backup_path);
+
+         // Remove contents of existing profile but keep directory
+         char rm_cmd[PATH_MAX * 3];
+         snprintf(rm_cmd, sizeof(rm_cmd), "rm -rf %s/*", profile_path);
+         if (system(rm_cmd) != 0) {
+             fprintf(stderr, "Failed to clean existing profile: %s\n", strerror(errno));
+             return -1;
+         }
+     }
+
+     // 2. Create new profile directory
+     if (mkdir(profile_path, 0755) == -1 && errno != EEXIST) {
+         fprintf(stderr, "Failed to create profile directory %s: %s\n", profile_path, strerror(errno));
+         // Try to restore backup if it exists
+         if (stat(backup_path, &st_profile) == 0) {
+             rename(backup_path, profile_path);
+         }
+         return -1;
+     }
+
      // Create main profile directory and its subdirectories
      const char* subdirs[] = {"bin", "lib", "share", "include", "etc", NULL};
      
@@ -973,4 +1001,137 @@ void free_profile_info(ProfileInfo* profiles, int count) {
         }
         free(profiles);
     }
+}
+
+// Add new rollback functions
+int rollback_profile(const char* profile_name) {
+    char profile_path[PATH_MAX];
+    char latest_path[PATH_MAX] = {0};
+    time_t current_time;
+    struct timespec ts;
+    
+    // Get accurate system time
+    if (clock_gettime(CLOCK_REALTIME, &ts) == -1) {
+        current_time = time(NULL);
+    } else {
+        current_time = ts.tv_sec;
+    }
+    
+    // Get profile paths
+    snprintf(profile_path, PATH_MAX, "/data/nix/profiles/%s", profile_name);
+
+    // Check if profile exists
+    struct stat st;
+    if (stat(profile_path, &st) != 0) {
+        fprintf(stderr, "Profile '%s' does not exist\n", profile_name);
+        return -1;
+    }
+
+    // Find previous generation by looking for profile-<timestamp> with highest timestamp
+    DIR* dir = opendir("/data/nix/profiles");
+    struct dirent* entry;
+    time_t latest_time = 0;
+
+    if (!dir) {
+        fprintf(stderr, "Failed to open profiles directory\n");
+        return -1;
+    }
+
+    while ((entry = readdir(dir)) != NULL) {
+        if (strncmp(entry->d_name, profile_name, strlen(profile_name)) == 0 && 
+            entry->d_name[strlen(profile_name)] == '-') {
+            // Extract timestamp
+            time_t gen_time = atol(entry->d_name + strlen(profile_name) + 1);
+            if (gen_time < current_time && gen_time > latest_time) {
+                latest_time = gen_time;
+                snprintf(latest_path, PATH_MAX, "/data/nix/profiles/%s", entry->d_name);
+            }
+        }
+    }
+    closedir(dir);
+
+    if (latest_time == 0) {
+        fprintf(stderr, "No previous generation found\n");
+        return -1;
+    }
+
+    // Remove current broken profile
+    char rm_cmd[PATH_MAX + 10];
+    snprintf(rm_cmd, sizeof(rm_cmd), "rm -rf %s", profile_path);
+    system(rm_cmd);
+
+    // Copy previous generation back to main profile
+    char cp_cmd[PATH_MAX * 3];
+    snprintf(cp_cmd, sizeof(cp_cmd), "cp -rP %s %s", latest_path, profile_path);
+    system(cp_cmd);
+
+    printf("Rolled back profile '%s' to generation from %s", 
+           profile_name, ctime(&latest_time));
+    return 0;
+}
+
+int get_profile_generations(const char* profile_name, time_t** timestamps, int* count) {
+    DIR* dir = opendir("/data/nix/profiles");
+    if (!dir) {
+        fprintf(stderr, "Failed to open profiles directory\n");
+        return -1;
+    }
+
+    // First count generations
+    struct dirent* entry;
+    *count = 0;
+    while ((entry = readdir(dir)) != NULL) {
+        if (strncmp(entry->d_name, profile_name, strlen(profile_name)) == 0 && 
+            entry->d_name[strlen(profile_name)] == '-') {
+            (*count)++;
+        }
+    }
+
+    // Allocate array
+    *timestamps = malloc(sizeof(time_t) * (*count));
+    if (!*timestamps) {
+        closedir(dir);
+        return -1;
+    }
+
+    // Reset directory and fill array
+    rewinddir(dir);
+    int i = 0;
+    while ((entry = readdir(dir)) != NULL) {
+        if (strncmp(entry->d_name, profile_name, strlen(profile_name)) == 0 && 
+            entry->d_name[strlen(profile_name)] == '-') {
+            (*timestamps)[i++] = atol(entry->d_name + strlen(profile_name) + 1);
+        }
+    }
+
+    closedir(dir);
+    return 0;
+}
+
+int switch_profile_generation(const char* profile_name, time_t timestamp) {
+    char profile_path[PATH_MAX];
+    char gen_path[PATH_MAX];
+    
+    snprintf(profile_path, PATH_MAX, "/data/nix/profiles/%s", profile_name);
+    snprintf(gen_path, PATH_MAX, "/data/nix/profiles/%s-%ld", profile_name, timestamp);
+
+    // Verify generation exists
+    struct stat st;
+    if (stat(gen_path, &st) != 0) {
+        fprintf(stderr, "Generation %ld does not exist\n", timestamp);
+        return -1;
+    }
+
+    // Remove current profile link
+    unlink(profile_path);
+
+    // Create new link
+    if (symlink(gen_path, profile_path) != 0) {
+        fprintf(stderr, "Failed to switch to generation %ld\n", timestamp);
+        return -1;
+    }
+
+    printf("Switched profile '%s' to generation from %s", 
+           profile_name, ctime(&timestamp));
+    return 0;
 }

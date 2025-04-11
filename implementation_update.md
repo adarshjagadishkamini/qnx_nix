@@ -91,6 +91,12 @@
    - Multi-user support
    - Garbage collection
 
+4. Generation Management:
+   - Implement garbage collection for old generations
+   - Add generation limiting
+   - Improve space efficiency
+   - Add generation metadata
+
 ## Impact Assessment
 
 - Development: Easier to maintain and extend
@@ -106,3 +112,89 @@ Continue with current approach as it provides:
 2. Acceptable performance overhead
 3. Improved maintainability
 4. Clear upgrade path
+
+## Profile Generations and Rollbacks
+
+1. Generation Management
+
+   Real Nix:
+   ```
+   /nix/var/nix/profiles/default -> default-N
+   default-1  (oldest)
+   default-2
+   default-3  (current)
+   All atomic operations using symlinks
+   ```
+
+   Our QNX Nix:
+   ```
+   /data/nix/profiles/default        (profile directory)
+   default-1234567890               (full copy, oldest)
+   default-1234567891               (full copy, newer)
+   default-1234567892               (full copy, current)
+   File-based copying for reliability
+   ```
+
+2. Rollback Process:
+
+   Real Nix:
+   ```
+   1. Find previous generation symlink
+   2. Atomic symlink switch to previous
+   3. No data copying needed
+   4. Almost instantaneous
+   ```
+
+   QNX Nix:
+   ```
+   1. Find highest timestamp backup < current
+   2. Remove current profile contents
+   3. Copy previous generation contents
+   4. Takes time proportional to profile size
+   ```
+
+3. Technical Comparison:
+
+   | Feature              | Real Nix        | QNX Nix         | Trade-off                    |
+   |---------------------|-----------------|-----------------|------------------------------|
+   | Operation Type      | Symlink switch  | Directory copy  | Safety vs Speed             |
+   | Space Usage         | Minimal         | Full copies     | Speed vs Storage            |
+   | Atomicity          | Perfect         | Best effort     | QNX filesystem limits       |
+   | Recovery           | Instant         | Possible loss   | Reliability vs Performance  |
+
+4. Generation Tracking:
+   ```
+   Real Nix:    Uses SQLite database for metadata
+   QNX Nix:     Uses timestamps in directory names
+   Impact:       Simpler but less metadata storage
+   ```
+
+5. Key Differences:
+
+   Real Nix Benefits:
+   - Atomic operations via symlinks
+   - Minimal disk space usage
+   - Instant rollbacks
+   - Rich metadata storage
+
+   QNX Nix Benefits:
+   - More resilient to filesystem issues
+   - Self-contained backups
+   - No database dependencies
+   - Easier to inspect/debug
+
+6. Failure Handling:
+
+   Real Nix:
+   ```
+   - Failed switch: Old symlink remains
+   - Corruption: Other generations unaffected
+   - Recovery: Instant via symlink
+   ```
+
+   QNX Nix:
+   ```
+   - Failed copy: May need manual cleanup
+   - Corruption: Each generation independent
+   - Recovery: Might need rebuild
+   ```

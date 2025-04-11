@@ -42,6 +42,11 @@ int gc_collect_garbage(void);
 int scan_dependencies(const char* exec_path, char*** deps_out);
 int add_boot_libraries(void);
 
+// Add new function prototypes
+int rollback_profile(const char* profile_name);
+int get_profile_generations(const char* profile_name, time_t** timestamps, int* count);
+int switch_profile_generation(const char* profile_name, time_t timestamp);
+
 // ---- NEW FUNCTION ----
 // Install a store path into a profile (creates symlinks/wrappers)
 int install_to_profile(const char* store_path, const char* profile_name);
