@@ -3,12 +3,11 @@
 # QNX compiler and flags
 QCC = qcc
 CFLAGS = -Vgcc_ntoaarch64le -g -Wall -Wno-parentheses
-CFLAGS += -I/home/akamini/qnx800/target/qnx7/usr/include
 LDFLAGS = -lsocket
 INCLUDES = -I$(QNX_TARGET)/usr/include
 
 # Source files
-SOURCES = sha256.c nix_store.c nix_store_db.c nix_store_mgr.c nix_gc.c main.c elf.c
+SOURCES = sha256.c nix_store.c nix_store_db.c nix_store_mgr.c nix_gc.c main.c
 OBJECTS = $(SOURCES:.c=.o)
 TARGET = nix-store
 

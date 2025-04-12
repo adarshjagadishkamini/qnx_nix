@@ -13,8 +13,6 @@
  #include <unistd.h>   // For symlink, execvp, chdir, unlink
  #include <libgen.h>   // For basename
  #include <sys/param.h> // For MAXPATHLEN if PATH_MAX is not defined
- #include <sys/types.h>
- #include <sys/stat.h>
  
  #ifndef PATH_MAX
  #define PATH_MAX MAXPATHLEN
@@ -26,11 +24,7 @@
  #define NIX_STORE_PATH "/data/nix/store"
  #endif
  
- // Add this near the top after includes
-static int create_wrapper_script(const char* script_path, const char* target_executable, const char* store_path);
-static char** get_store_references(const char* store_path, int* ref_count);
-
-// Initialize the store directory structure
+ // Initialize the store directory structure
  int store_init(void) {
      // Create the path hierarchy
      const char* path_parts[] = {"/data", "/data/nix", "/data/nix/store", "/data/nix/profiles"};
@@ -119,13 +113,6 @@ static char** get_store_references(const char* store_path, int* ref_count);
  
  // Add a file or directory to the store with explicit dependencies
  int add_to_store_with_deps(const char* source_path, const char* name, const char** deps, int deps_count) {
-     // Add store initialization check at start
-     struct stat st_store;
-     if (stat(NIX_STORE_PATH, &st_store) != 0 || !S_ISDIR(st_store.st_mode)) {
-         fprintf(stderr, "Store not initialized. Please run --init first.\n");
-         return -1;
-     }
-
      struct stat st;
      if (stat(source_path, &st) == -1) {
          fprintf(stderr, "Source path does not exist: %s (%s)\n", source_path, strerror(errno));
@@ -220,8 +207,9 @@ static char** get_store_references(const char* store_path, int* ref_count);
      if (S_ISDIR(st.st_mode)) {
          // Copy the directory content *into* the store path
          char cmd[PATH_MAX * 3];
-         // QNX: Use simple cp -r instead of cp -rP
-         copy_len = snprintf(cmd, sizeof(cmd), "cp -r %s/. %s/", source_path, store_path);
+         // Use cp -rP to copy recursively, preserving symlinks. Copy contents using trailing /.
+         // Check command length before executing
+         copy_len = snprintf(cmd, sizeof(cmd), "cp -rP %s/. %s/", source_path, store_path);
          if(copy_len < 0 || copy_len >= sizeof(cmd)) {
               fprintf(stderr, "Error: Copy command exceeds buffer size for source %s\n", source_path);
               // Attempt cleanup before returning
@@ -307,42 +295,7 @@ static char** get_store_references(const char* store_path, int* ref_count);
           return -1;
      }
  
-     // After copying file to store
-     if (S_ISREG(st.st_mode) && elf_is_elf(source_path)) {
-         char* binary_path = NULL;
-         if (asprintf(&binary_path, "%s/bin/%s", store_path, basename((char*)source_path)) == -1) {
-             fprintf(stderr, "Failed to allocate binary path\n");
-             return -1;
-         }
-         
-         // Safe RPATH construction
-         char rpath[PATH_MAX * 10] = {0};
-         int written = snprintf(rpath, sizeof(rpath), "$ORIGIN/../lib");
-         if (written < 0 || written >= sizeof(rpath)) {
-             fprintf(stderr, "RPATH buffer overflow\n");
-             free(binary_path);
-             return -1;
-         }
-
-         // Add dependency paths safely
-         for (int i = 0; i < deps_count && written < sizeof(rpath); i++) {
-             int append = snprintf(rpath + written, sizeof(rpath) - written, 
-                                 ":%s/lib", deps[i]);
-             if (append < 0 || append >= sizeof(rpath) - written) {
-                 fprintf(stderr, "RPATH buffer overflow with dependencies\n");
-                 free(binary_path);
-                 return -1;
-             }
-             written += append;
-         }
-
-         if (elf_set_rpath(binary_path, rpath) != 0) {
-             fprintf(stderr, "Warning: Failed to set RPATH in %s\n", binary_path);
-         }
-         
-         free(binary_path);
-     }
-
+ 
      // Make the store path read-only
      make_store_path_read_only(store_path);
  
@@ -428,7 +381,6 @@ static char* find_store_path_for_boot_lib(const char* boot_path) {
     lib_name++; // Skip the '/'
 
     printf("  Looking for library: %s\n", lib_name);
-    size_t lib_name_len = strlen(lib_name);
 
     DIR* dir = opendir(NIX_STORE_PATH);
     if (!dir) return NULL;
@@ -437,18 +389,26 @@ static char* find_store_path_for_boot_lib(const char* boot_path) {
     struct dirent* entry;
     while ((entry = readdir(dir)) != NULL) {
         if (entry->d_name[0] == '.') continue;
-        size_t entry_len = strlen(entry->d_name);
 
-        // QNX: Exact suffix match for library names
-        if (entry_len >= lib_name_len && 
-            strcmp(entry->d_name + entry_len - lib_name_len, lib_name) == 0) {
+        // Check if this entry has our library name in it
+        if (strstr(entry->d_name, lib_name) != NULL) {
             char full_path[PATH_MAX];
             snprintf(full_path, sizeof(full_path), "%s/%s", NIX_STORE_PATH, entry->d_name);
-            result = strdup(full_path);
-            break;
+
+            // Verify it exists and is a regular file
+            struct stat st;
+            if (stat(full_path, &st) == 0) {
+                printf("  Found library store path: %s\n", full_path);
+                result = strdup(full_path);
+                break;
+            }
         }
     }
+
     closedir(dir);
+    if (!result) {
+        printf("  Failed to find library in store: %s\n", lib_name);
+    }
     return result;
 }
 
@@ -478,63 +438,72 @@ int scan_dependencies(const char* exec_path, char*** deps_out) {
      printf("Scanning dependencies for %s using: %s\n", exec_path, cmd);
  
      while (fgets(buffer, sizeof(buffer), pipe)) {
-         // QNX: Parse ldd output without requiring =>
-         char* lib_path = NULL;
-         
-         if (strstr(buffer, "/proc/boot/")) {
-             lib_path = strstr(buffer, "/proc/boot/");
-         } else if (strstr(buffer, NIX_STORE_PATH)) {
-             lib_path = strstr(buffer, NIX_STORE_PATH);
-         }
-
-         if (lib_path) {
-             // Extract path until whitespace or end
-             char extracted_path[PATH_MAX] = {0};
-             size_t i = 0;
-             while (lib_path[i] && !isspace((unsigned char)lib_path[i])) {
-                 extracted_path[i] = lib_path[i];
-                 i++;
+         char* arrow = strstr(buffer, "=>");
+         if (arrow) {
+             char* lib_path_start = arrow + 2;
+             char extracted_path[PATH_MAX];
+ 
+             while (*lib_path_start != '\0' && isspace((unsigned char)*lib_path_start)) {
+                 lib_path_start++;
              }
-
-             // Process the path
-             struct stat st;
-             if (stat(extracted_path, &st) == 0 && S_ISREG(st.st_mode)) {
-                 char* store_path = NULL;
-                 
-                 if (strncmp(extracted_path, NIX_STORE_PATH, strlen(NIX_STORE_PATH)) == 0) {
-                     store_path = strdup(extracted_path);
-                 } else if (strncmp(extracted_path, "/proc/boot/", 11) == 0) {
-                     store_path = find_store_path_for_boot_lib(extracted_path);
-                 }
-
-                 // Add debug output
-                 if (store_path) {
-                     printf("  Found dependency mapping:\n");
-                     printf("    From: %s\n", extracted_path);
-                     printf("    To:   %s\n", store_path);
-                 }
-
-                 if (store_path) {
-                     // Add to dependencies array
-                     if (dep_count >= deps_capacity) {
-                         deps_capacity = (deps_capacity == 0) ? 8 : deps_capacity * 2;
-                         char** new_deps = realloc(deps, (deps_capacity + 1) * sizeof(char*));
-                         if (!new_deps) {
-                             free(store_path);
-                             fprintf(stderr, "Memory allocation failed during dependency scan\n");
-                             for (int k = 0; k < dep_count; k++) free(deps[k]);
-                             free(deps);
-                             pclose(pipe);
-                             *deps_out = NULL;
-                             return -1;
+ 
+             char* lib_path_end = lib_path_start;
+             while (*lib_path_end != '\0' &&
+                    !isspace((unsigned char)*lib_path_end) &&
+                    *lib_path_end != '(') {
+                 lib_path_end++;
+             }
+ 
+             size_t path_len = lib_path_end - lib_path_start;
+ 
+             if (path_len > 0 && path_len < PATH_MAX) {
+                 strncpy(extracted_path, lib_path_start, path_len);
+                 extracted_path[path_len] = '\0';
+ 
+                 // Ensure it's an absolute path and exists
+                 if (extracted_path[0] == '/') {
+                     struct stat st;
+                     if (stat(extracted_path, &st) == 0 && S_ISREG(st.st_mode)) {
+                         char* store_path = NULL;
+                         
+                         if (strncmp(extracted_path, NIX_STORE_PATH, strlen(NIX_STORE_PATH)) == 0) {
+                             // Direct store path
+                             store_path = strdup(extracted_path);
+                         } else if (strncmp(extracted_path, "/proc/boot/", 11) == 0) {
+                             // Boot library - find its store path
+                             store_path = find_store_path_for_boot_lib(extracted_path);
                          }
-                         deps = new_deps;
+
+                         // Add debug output
+                         if (store_path) {
+                             printf("  Found dependency mapping:\n");
+                             printf("    From: %s\n", extracted_path);
+                             printf("    To:   %s\n", store_path);
+                         }
+
+                         if (store_path) {
+                             // Add to dependencies array
+                             if (dep_count >= deps_capacity) {
+                                 deps_capacity = (deps_capacity == 0) ? 8 : deps_capacity * 2;
+                                 char** new_deps = realloc(deps, (deps_capacity + 1) * sizeof(char*));
+                                 if (!new_deps) {
+                                     free(store_path);
+                                     fprintf(stderr, "Memory allocation failed during dependency scan\n");
+                                     for (int k = 0; k < dep_count; k++) free(deps[k]);
+                                     free(deps);
+                                     pclose(pipe);
+                                     *deps_out = NULL;
+                                     return -1;
+                                 }
+                                 deps = new_deps;
+                             }
+                             deps[dep_count] = store_path;
+                             printf("  Found store dependency: %s\n", deps[dep_count]);
+                             dep_count++;
+                         } else {
+                             printf("  Skipping non-store dependency: %s\n", extracted_path);
+                         }
                      }
-                     deps[dep_count] = store_path;
-                     printf("  Found store dependency: %s\n", deps[dep_count]);
-                     dep_count++;
-                 } else {
-                     printf("  Skipping non-store dependency: %s\n", extracted_path);
                  }
              }
          }
@@ -570,13 +539,6 @@ int scan_dependencies(const char* exec_path, char*** deps_out) {
  
  // Add /proc/boot libraries to store
  int add_boot_libraries(void) {
-     // Add store initialization check at start
-     struct stat st_store;
-     if (stat(NIX_STORE_PATH, &st_store) != 0 || !S_ISDIR(st_store.st_mode)) {
-         fprintf(stderr, "Store not initialized. Please run --init first.\n");
-         return -1;
-     }
-
      DIR* dir = opendir("/proc/boot");
      if (!dir) {
          fprintf(stderr, "Failed to open /proc/boot: %s\n", strerror(errno));
@@ -672,20 +634,57 @@ int scan_dependencies(const char* exec_path, char*** deps_out) {
      return (status);
  }
  
+ // Helper function to create a wrapper script
+ static int create_wrapper_script(const char* script_path, const char* target_executable, const char* store_path) {
+     FILE* f = fopen(script_path, "w");
+     if (!f) {
+         fprintf(stderr,"Failed to open wrapper script %s for writing: %s\n", script_path, strerror(errno));
+         return -1;
+     }
+ 
+     fprintf(f, "#!/bin/sh\n");
+     fprintf(f, "# Wrapper for %s\n\n", target_executable);
+ 
+     // --- Set LD_LIBRARY_PATH ---
+     fprintf(f, "export LD_LIBRARY_PATH=\""); // Start with empty path
+ 
+     // Add dependency paths directly
+     char** refs = db_get_references(store_path);
+     if (refs) {
+         int path_added = 0;
+         for (int i = 0; refs[i] != NULL; i++) {
+             if (path_added) fprintf(f, ":");
+             fprintf(f, "%s", refs[i]); // Add each dependency path
+             path_added = 1;
+             free(refs[i]);
+         }
+         free(refs);
+     }
+     fprintf(f, "\"\n\n"); // Close quotes for LD_LIBRARY_PATH
+ 
+     // --- Execute the target ---
+     fprintf(f, "exec \"%s\" \"$@\"\n", target_executable);
+ 
+     if (fclose(f) != 0) {
+         fprintf(stderr,"Failed to close wrapper script %s: %s\n", script_path, strerror(errno));
+          remove(script_path);
+          return -1;
+     };
+ 
+     // Make the script executable
+     if (chmod(script_path, 0755) == -1) {
+         fprintf(stderr,"Failed to make wrapper script %s executable: %s\n", script_path, strerror(errno));
+         remove(script_path);
+         return -1;
+     }
+ 
+     printf("    Created wrapper: %s -> %s\n", script_path, target_executable);
+     return 0;
+ }
+ 
+ 
 // Install a store path into a profile
 int install_to_profile(const char* store_path, const char* profile_name) {
-    if (!store_path || !profile_name) {
-        fprintf(stderr, "Invalid NULL parameter in install_to_profile\n");
-        return -1;
-    }
-
-    // Validate store_path exists
-    struct stat st;
-    if (stat(store_path, &st) != 0 || !S_ISDIR(st.st_mode)) {
-        fprintf(stderr, "Store path %s does not exist or is not a directory\n", store_path);
-        return -1;
-    }
-
     printf("Installing %s into profile '%s'\n", store_path, profile_name);
     int ret_val;
     time_t current_time = time(NULL);
@@ -826,52 +825,13 @@ int install_to_profile(const char* store_path, const char* profile_name) {
                  }
  
                  if (strcmp(subdirs[i], "bin") == 0) {
+                     // Instead of creating wrapper script, modify RPATH
                      struct stat item_st;
                      if(stat(source_item_path, &item_st) == 0 && S_ISREG(item_st.st_mode)) {
-                         // Try RPATH first, fall back to wrapper script
-                         int use_wrapper = 1;
-                         
-                         if (elf_is_elf(source_item_path)) {
-                             int ref_count = 0;
-                             char** refs = get_store_references(store_path, &ref_count);
-                             
-                             if (refs) {
-                                 char rpath[PATH_MAX * 10] = {0};
-                                 int written = snprintf(rpath, sizeof(rpath), "$ORIGIN/../lib");
-                                 
-                                 if (written > 0 && written < sizeof(rpath)) {
-                                     for (int j = 0; j < ref_count; j++) {
-                                         int append = snprintf(rpath + written, sizeof(rpath) - written,
-                                                            ":%s", refs[j]);
-                                         if (append < 0 || append >= sizeof(rpath) - written) {
-                                             break;
-                                         }
-                                         written += append;
-                                     }
-
-                                     if (elf_set_rpath(source_item_path, rpath) == 0) {
-                                         use_wrapper = 0;
-                                         if (symlink(source_item_path, profile_item_path) == -1) {
-                                             fprintf(stderr, "Failed to create symlink %s -> %s\n",
-                                                     profile_item_path, source_item_path);
-                                             for (int j = 0; j < ref_count; j++) free(refs[j]);
-                                             free(refs);
-                                             return -1;
-                                         }
-                                     }
-                                 }
-                                 
-                                 for (int j = 0; j < ref_count; j++) free(refs[j]);
-                                 free(refs);
-                             }
-                         }
-
-                         if (use_wrapper) {
-                             printf("    Creating wrapper script for: %s\n", source_item_path);
-                             if (create_wrapper_script(profile_item_path, source_item_path, store_path) != 0) {
-                                 fprintf(stderr, "Failed to create wrapper for %s\n", source_item_path);
-                                 return -1;
-                             }
+                         // Create wrapper script instead of attempting RPATH modification
+                         if (create_wrapper_script(profile_item_path, source_item_path, store_path) != 0) {
+                             fprintf(stderr, "Failed to create wrapper for %s\n", source_item_path);
+                             return -1;
                          }
                      }
                  } else {
@@ -1176,73 +1136,4 @@ int switch_profile_generation(const char* profile_name, time_t timestamp) {
     printf("Switched profile '%s' to generation from %s", 
            profile_name, ctime(&timestamp));
     return 0;
-}
-
-// Move create_wrapper_script implementation here, before it's used
-static int create_wrapper_script(const char* script_path, const char* target_executable, const char* store_path) {
-    if (!script_path || !target_executable || !store_path) {
-        fprintf(stderr, "Invalid NULL parameter in create_wrapper_script\n");
-        return -1;
-    }
-
-    FILE* f = fopen(script_path, "w");
-    if (!f) {
-        fprintf(stderr, "Failed to open wrapper script %s for writing: %s\n", 
-                script_path, strerror(errno));
-        return -1;
-    }
-
-    fprintf(f, "#!/bin/sh\n");
-    fprintf(f, "# Wrapper for %s\n\n", target_executable);
-    fprintf(f, "export LD_LIBRARY_PATH=\"");
-
-    int ref_count = 0;
-    char** refs = get_store_references(store_path, &ref_count);
-    
-    if (refs) {
-        for (int i = 0; i < ref_count; i++) {
-            if (i > 0) fprintf(f, ":");
-            fprintf(f, "%s", refs[i]);
-            free(refs[i]);
-        }
-        free(refs);
-    }
-
-    fprintf(f, "\"\n\n");
-    fprintf(f, "exec \"%s\" \"$@\"\n", target_executable);
-
-    if (fclose(f) != 0) {
-        fprintf(stderr, "Error writing wrapper script: %s\n", strerror(errno));
-        return -1;
-    }
-
-    if (chmod(script_path, 0755) != 0) {
-        fprintf(stderr, "Failed to set wrapper script permissions: %s\n", strerror(errno));
-        unlink(script_path); // Try to cleanup
-        return -1;
-    }
-
-    return 0;
-}
-
-// Helper function to safely get and process references
-static char** get_store_references(const char* store_path, int* ref_count) {
-    if (!store_path) {
-        *ref_count = 0;
-        return NULL;
-    }
-
-    char** refs = db_get_references(store_path);
-    if (!refs) {
-        *ref_count = 0;
-        return NULL;
-    }
-
-    // Count references
-    *ref_count = 0;
-    while (refs[*ref_count] != NULL) {
-        (*ref_count)++;
-    }
-
-    return refs;
 }

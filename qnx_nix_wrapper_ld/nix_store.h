@@ -18,7 +18,6 @@
 #include <sys/dispatch.h>  // QNX message passing
 #include "sha256.h"        // Our custom SHA-256 implementation
 #include <limits.h> // PATH_MAX needed if not implicitly included
-#include "elf.h"  // Add this near other includes
 
 // Define the base store path
 #define NIX_STORE_PATH "/data/nix/store"

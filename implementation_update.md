@@ -198,3 +198,34 @@ Continue with current approach as it provides:
    - Corruption: Each generation independent
    - Recovery: Might need rebuild
    ```
+
+## RPATH vs Wrapper Scripts
+
+Current Implementation (Wrapper Scripts):
++ Simple to implement and debug
++ Works with any executable type
++ Easy to modify runtime behavior
+- Performance overhead from shell script
+- Environment variable dependencies
+- Less deterministic
+
+Proposed RPATH Implementation:
++ Better performance (direct library loading)
++ More deterministic (embedded paths)
++ Closer to real Nix behavior
++ No environment variable dependencies
+- Requires ELF manipulation
+- More complex implementation
+- Only works with ELF binaries
+
+Migration Plan:
+1. Implement ELF parsing/modification
+2. Add RPATH support while keeping wrapper fallback
+3. Auto-detect ELF vs non-ELF
+4. Use RPATH for ELF, wrappers for others
+5. Add configuration option to force wrapper mode
+
+Performance Impact:
+- RPATH: ~2-3ms startup
+- Wrapper: ~4-5ms startup
+- Mixed mode: Based on binary type
