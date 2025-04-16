@@ -257,8 +257,18 @@
              return -1;
          }
 
+         // Special handling for files from /proc/boot
          char cmd[PATH_MAX * 3];
-         copy_len = snprintf(cmd, sizeof(cmd), "cp -P %s %s", source_path, dest_path);
+         if (strncmp(source_path, "/proc/boot/", 11) == 0) {
+             // Use dd for boot files to preserve all attributes
+             copy_len = snprintf(cmd, sizeof(cmd), 
+                     "dd if=%s of=%s bs=4096 conv=sync,noerror 2>/dev/null && chmod 755 %s", 
+                     source_path, dest_path, dest_path);
+         } else {
+             // Normal file copy for other files
+             copy_len = snprintf(cmd, sizeof(cmd), "cp -P %s %s", source_path, dest_path);
+         }
+
          if(copy_len < 0 || copy_len >= sizeof(cmd)) {
              fprintf(stderr, "Error: Copy command exceeds buffer size for source %s\n", source_path);
              rmdir(store_path);
@@ -273,17 +283,34 @@
          printf("Executing: %s\n", cmd);
          int ret = system(cmd);
          if (ret != 0) {
-             fprintf(stderr, "Failed to copy file/link %s to %s (system returned %d)\n", source_path, store_path, ret);
+             fprintf(stderr, "Failed to copy file %s to %s (system returned %d)\n", 
+                     source_path, dest_path, ret);
              char rm_cmd[PATH_MAX + 10];
-             snprintf(rm_cmd, sizeof(rm_cmd), "rm -rf %s", store_path); // Cleanup created dir
+             snprintf(rm_cmd, sizeof(rm_cmd), "rm -rf %s", store_path);
              system(rm_cmd);
              free(store_path);
              if (dep_store_paths) {
-                  for (int i = 0; i < deps_count; i++) if(dep_store_paths[i]) free(dep_store_paths[i]);
-                  free(dep_store_paths);
+                 for (int i = 0; i < deps_count; i++) if(dep_store_paths[i]) free(dep_store_paths[i]);
+                 free(dep_store_paths);
              }
              return -1;
          }
+
+         // Verify the copied file exists and is executable
+         struct stat st_copy;
+         if (stat(dest_path, &st_copy) != 0 || !S_ISREG(st_copy.st_mode)) {
+             fprintf(stderr, "Failed to verify copied file %s\n", dest_path);
+             rmdir(store_path);
+             free(store_path);
+             if (dep_store_paths) {
+                 for (int i = 0; i < deps_count; i++) if(dep_store_paths[i]) free(dep_store_paths[i]);
+                 free(dep_store_paths);
+             }
+             return -1;
+         }
+
+         // Always ensure the file is executable
+         chmod(dest_path, 0755);
      } else {
           fprintf(stderr, "Unsupported file type for source path: %s\n", source_path);
           rmdir(store_path); // Simple cleanup attempt
@@ -983,17 +1010,16 @@ int install_to_profile(const char* store_path, const char* profile_name) {
                  }
  
                  if (strcmp(subdirs[i], "bin") == 0) {
-                     // Instead of creating wrapper script, modify RPATH
+                     // Special handling for binaries 
                      struct stat item_st;
                      if(stat(source_item_path, &item_st) == 0 && S_ISREG(item_st.st_mode)) {
-                         // Only create wrapper if it doesn't exist or we're updating this specific package
-                         if (access(profile_item_path, F_OK) != 0 || 
-                             strstr(source_item_path, store_path) != NULL) {
-                             if (create_wrapper_script(profile_item_path, source_item_path, store_path) != 0) {
-                                 fprintf(stderr, "Failed to create wrapper for %s\n", source_item_path);
-                                 return -1;
-                             }
+                         printf("Installing binary: %s -> %s\n", source_item_path, profile_item_path);
+                         // Create wrapper script regardless of source
+                         if (create_wrapper_script(profile_item_path, source_item_path, store_path) != 0) {
+                             fprintf(stderr, "Failed to create wrapper for %s\n", source_item_path);
+                             return -1;
                          }
+                         printf("Created wrapper script for %s\n", source_item_path);
                      }
                  } else {
                      // Create direct symlink for items in lib/, share/, etc.
