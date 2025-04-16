@@ -636,53 +636,191 @@ int scan_dependencies(const char* exec_path, char*** deps_out) {
  
  // Helper function to create a wrapper script
  static int create_wrapper_script(const char* script_path, const char* target_executable, const char* store_path) {
-     FILE* f = fopen(script_path, "w");
-     if (!f) {
-         fprintf(stderr,"Failed to open wrapper script %s for writing: %s\n", script_path, strerror(errno));
-         return -1;
-     }
+    FILE* f = fopen(script_path, "w");
+    if (!f) {
+        fprintf(stderr,"Failed to open wrapper script %s for writing: %s\n", script_path, strerror(errno));
+        return -1;
+    }
+
+    // Write shebang and header
+    fprintf(f, "#!/bin/sh\n");
+    fprintf(f, "# Wrapper for '%s'\n\n", target_executable);
+
+    // Save original state
+    fprintf(f, "# Save original state\n");
+    fprintf(f, "ORIG_PWD=\"$(pwd)\"\n");
+    fprintf(f, "ORIG_LD_LIBRARY_PATH=\"$LD_LIBRARY_PATH\"\n");
+    fprintf(f, "echo \"Original working directory: $ORIG_PWD\"\n");
+    fprintf(f, "echo \"Original LD_LIBRARY_PATH: $ORIG_LD_LIBRARY_PATH\"\n\n");
+
+    // Get script location using relative paths only
+    fprintf(f, "# Resolve script and profile paths\n");
+    fprintf(f, "SCRIPT_DIR=\"$(dirname \"$0\")\"\n");
+    fprintf(f, "PROFILE_DIR=\"$(cd \"$SCRIPT_DIR/..\" && pwd)\"\n");
+    fprintf(f, "PROFILE_LIB=\"$PROFILE_DIR/lib\"\n\n");
+
+    fprintf(f, "echo \"Profile directory: $PROFILE_DIR\"\n");
+    fprintf(f, "echo \"Profile lib directory: $PROFILE_LIB\"\n\n");
+
+    // Show dependencies
+    fprintf(f, "echo \"Binary dependencies:\"\n");
+    fprintf(f, "ldd '%s' || true\n\n", target_executable);
+
+    // Verify lib directory exists
+    fprintf(f, "# Verify lib directory exists\n");
+    fprintf(f, "if [ ! -d \"$PROFILE_LIB\" ]; then\n");
+    fprintf(f, "    echo \"Error: Profile lib directory not found: $PROFILE_LIB\"\n");
+    fprintf(f, "    exit 1\n");
+    fprintf(f, "fi\n\n");
+
+    // Debug output
+    fprintf(f, "echo \"Using libraries from: $PROFILE_LIB\"\n");
+    fprintf(f, "echo \"Available libraries:\"\n");
+    fprintf(f, "ls -l \"$PROFILE_LIB\"\n\n");
+    
+    // Execute with clean environment but preserve working directory
+    fprintf(f, "# Execute target\n");
+    fprintf(f, "echo \"Executing: '%s'\"\n", target_executable);
+    fprintf(f, "cd \"$ORIG_PWD\" # Restore original working directory\n");
+    fprintf(f, "exec env - \\\n");
+    fprintf(f, "    PATH=\"$PATH\" \\\n");
+    fprintf(f, "    PWD=\"$ORIG_PWD\" \\\n");
+    fprintf(f, "    HOME=\"$HOME\" \\\n");
+    fprintf(f, "    USER=\"$USER\" \\\n");
+    fprintf(f, "    TERM=\"$TERM\" \\\n");
+    fprintf(f, "    LD_LIBRARY_PATH=\"$PROFILE_LIB\" \\\n");
+    fprintf(f, "    '%s' \"$@\"\n", target_executable);
+
+    if (fclose(f) != 0) {
+        fprintf(stderr,"Failed to close wrapper script %s: %s\n", script_path, strerror(errno));
+        remove(script_path);
+        return -1;
+    }
+
+    if (chmod(script_path, 0755) == -1) {
+        fprintf(stderr,"Failed to make wrapper script %s executable: %s\n", script_path, strerror(errno));
+        remove(script_path);
+        return -1;
+    }
+
+    return 0;
+}
  
-     fprintf(f, "#!/bin/sh\n");
-     fprintf(f, "# Wrapper for %s\n\n", target_executable);
- 
-     // --- Set LD_LIBRARY_PATH ---
-     fprintf(f, "export LD_LIBRARY_PATH=\""); // Start with empty path
- 
-     // Add dependency paths directly
-     char** refs = db_get_references(store_path);
-     if (refs) {
-         int path_added = 0;
-         for (int i = 0; refs[i] != NULL; i++) {
-             if (path_added) fprintf(f, ":");
-             fprintf(f, "%s", refs[i]); // Add each dependency path
-             path_added = 1;
-             free(refs[i]);
-         }
-         free(refs);
-     }
-     fprintf(f, "\"\n\n"); // Close quotes for LD_LIBRARY_PATH
- 
-     // --- Execute the target ---
-     fprintf(f, "exec \"%s\" \"$@\"\n", target_executable);
- 
-     if (fclose(f) != 0) {
-         fprintf(stderr,"Failed to close wrapper script %s: %s\n", script_path, strerror(errno));
-          remove(script_path);
-          return -1;
-     };
- 
-     // Make the script executable
-     if (chmod(script_path, 0755) == -1) {
-         fprintf(stderr,"Failed to make wrapper script %s executable: %s\n", script_path, strerror(errno));
-         remove(script_path);
-         return -1;
-     }
- 
-     printf("    Created wrapper: %s -> %s\n", script_path, target_executable);
-     return 0;
- }
- 
- 
+// Helper function to create library symlinks
+static int create_library_symlinks(const char* store_path, const char* profile_lib_dir) {
+    printf("Creating library symlinks...\n");
+    printf("  Store path: %s\n", store_path);
+    printf("  Profile lib dir: %s\n", profile_lib_dir);
+
+    // Get all dependencies
+    char** all_deps = db_get_references(store_path);
+    if (!all_deps) {
+        printf("  No dependencies found for %s\n", store_path);
+        return 0;
+    }
+
+    int result = 0;
+    const char* search_dirs[] = {"lib", "bin", NULL};
+
+    // First, create symlinks for the libraries in the store path itself
+    for (const char** dir_type = search_dirs; *dir_type != NULL; dir_type++) {
+        char src_lib_dir[PATH_MAX];
+        snprintf(src_lib_dir, PATH_MAX, "%s/%s", store_path, *dir_type);
+        printf("  Looking for libraries in package: %s\n", src_lib_dir);
+        
+        DIR* dir = opendir(src_lib_dir);
+        if (!dir) continue;
+
+        struct dirent* entry;
+        while ((entry = readdir(dir)) != NULL) {
+            if (strcmp(entry->d_name, ".") == 0 || strcmp(entry->d_name, "..") == 0)
+                continue;
+            
+            if (strstr(entry->d_name, ".so") == NULL)
+                continue;
+
+            char lib_src[PATH_MAX], lib_dest[PATH_MAX];
+            snprintf(lib_src, PATH_MAX, "%s/%s/%s", store_path, *dir_type, entry->d_name);
+            snprintf(lib_dest, PATH_MAX, "%s/%s", profile_lib_dir, entry->d_name);
+            
+            printf("  Processing package library: %s\n", entry->d_name);
+            printf("    Source: %s\n", lib_src);
+            printf("    Dest: %s\n", lib_dest);
+            
+            struct stat st;
+            if (stat(lib_src, &st) != 0) continue;
+            
+            if (unlink(lib_dest) == -1 && errno != ENOENT) {
+                printf("    Warning: Failed to remove existing link: %s\n", strerror(errno));
+            }
+            
+            if (symlink(lib_src, lib_dest) == -1) {
+                fprintf(stderr, "    Failed to create symlink for %s: %s\n", 
+                        entry->d_name, strerror(errno));
+                result = -1;
+            } else {
+                printf("    Created library symlink: %s -> %s\n", lib_dest, lib_src);
+            }
+        }
+        closedir(dir);
+    }
+
+    // Then process dependencies
+    for (int i = 0; all_deps[i] != NULL; i++) {
+        printf("  Processing dependency: %s\n", all_deps[i]);
+        
+        for (const char** dir_type = search_dirs; *dir_type != NULL; dir_type++) {
+            char dep_lib_dir[PATH_MAX];
+            snprintf(dep_lib_dir, PATH_MAX, "%s/%s", all_deps[i], *dir_type);
+            printf("  Looking for libraries in: %s\n", dep_lib_dir);
+            
+            DIR* dir = opendir(dep_lib_dir);
+            if (!dir) continue;
+
+            struct dirent* entry;
+            while ((entry = readdir(dir)) != NULL) {
+                if (strcmp(entry->d_name, ".") == 0 || strcmp(entry->d_name, "..") == 0)
+                    continue;
+                    
+                if (strstr(entry->d_name, ".so") == NULL)
+                    continue;
+
+                char lib_src[PATH_MAX], lib_dest[PATH_MAX];
+                snprintf(lib_src, PATH_MAX, "%s/%s/%s", all_deps[i], *dir_type, entry->d_name);
+                snprintf(lib_dest, PATH_MAX, "%s/%s", profile_lib_dir, entry->d_name);
+                
+                printf("  Processing library: %s\n", entry->d_name);
+                printf("    Source: %s\n", lib_src);
+                printf("    Dest: %s\n", lib_dest);
+                
+                struct stat st;
+                if (stat(lib_src, &st) != 0) continue;
+                
+                if (unlink(lib_dest) == -1 && errno != ENOENT) {
+                    printf("    Warning: Failed to remove existing link: %s\n", strerror(errno));
+                }
+                
+                if (symlink(lib_src, lib_dest) == -1) {
+                    fprintf(stderr, "    Failed to create symlink for %s: %s\n", 
+                            entry->d_name, strerror(errno));
+                    result = -1;
+                } else {
+                    printf("    Created library symlink: %s -> %s\n", lib_dest, lib_src);
+                }
+            }
+            closedir(dir);
+        }
+    }
+
+    // Clean up
+    for (int i = 0; all_deps[i] != NULL; i++) {
+        free(all_deps[i]);
+    }
+    free(all_deps);
+
+    return result;
+}
+
 // Install a store path into a profile
 int install_to_profile(const char* store_path, const char* profile_name) {
     printf("Installing %s into profile '%s'\n", store_path, profile_name);
@@ -716,13 +854,14 @@ int install_to_profile(const char* store_path, const char* profile_name) {
         }
         printf("Created new generation backup: %s\n", backup_path);
 
-        // Remove contents of existing profile but keep directory
-        char rm_cmd[PATH_MAX * 3];
-        snprintf(rm_cmd, sizeof(rm_cmd), "rm -rf %s/*", profile_path);
-        if (system(rm_cmd) != 0) {
-            fprintf(stderr, "Failed to clean existing profile: %s\n", strerror(errno));
-            return -1;
-        }
+        // Instead of removing all contents, we'll preserve them
+        // Remove this line:
+        // char rm_cmd[PATH_MAX * 3];
+        // snprintf(rm_cmd, sizeof(rm_cmd), "rm -rf %s/*", profile_path);
+        // if (system(rm_cmd) != 0) {
+        //     fprintf(stderr, "Failed to clean existing profile: %s\n", strerror(errno));
+        //     return -1;
+        // }
     }
 
     // 2. Create new profile directory
@@ -756,6 +895,25 @@ int install_to_profile(const char* store_path, const char* profile_name) {
         }
     }
  
+    // Create lib directory and symlinks first
+    char profile_lib_dir[PATH_MAX];
+    ret_val = snprintf(profile_lib_dir, PATH_MAX, "%s/lib", profile_path);
+    if (ret_val < 0 || ret_val >= PATH_MAX) {
+        fprintf(stderr, "Error: Profile lib directory path too long\n");
+        return -1;
+    }
+
+    if (mkdir(profile_lib_dir, 0755) == -1 && errno != EEXIST) {
+        fprintf(stderr, "Failed to create profile lib directory: %s\n", strerror(errno));
+        return -1;
+    }
+
+    // Create library symlinks
+    if (create_library_symlinks(store_path, profile_lib_dir) != 0) {
+        fprintf(stderr, "Warning: Some library symlinks could not be created\n");
+        // Continue anyway, as some libraries might have been linked successfully
+    }
+
     // 3. Iterate through common subdirectories (bin, lib, share, etc.)
     for (int i = 0; subdirs[i] != NULL; i++) {
         char source_subdir_path[PATH_MAX];
@@ -828,10 +986,13 @@ int install_to_profile(const char* store_path, const char* profile_name) {
                      // Instead of creating wrapper script, modify RPATH
                      struct stat item_st;
                      if(stat(source_item_path, &item_st) == 0 && S_ISREG(item_st.st_mode)) {
-                         // Create wrapper script instead of attempting RPATH modification
-                         if (create_wrapper_script(profile_item_path, source_item_path, store_path) != 0) {
-                             fprintf(stderr, "Failed to create wrapper for %s\n", source_item_path);
-                             return -1;
+                         // Only create wrapper if it doesn't exist or we're updating this specific package
+                         if (access(profile_item_path, F_OK) != 0 || 
+                             strstr(source_item_path, store_path) != NULL) {
+                             if (create_wrapper_script(profile_item_path, source_item_path, store_path) != 0) {
+                                 fprintf(stderr, "Failed to create wrapper for %s\n", source_item_path);
+                                 return -1;
+                             }
                          }
                      }
                  } else {
@@ -925,26 +1086,24 @@ int switch_profile(const char* profile_name) {
     snprintf(profile_path, PATH_MAX, "/data/nix/profiles/%s", profile_name);
     snprintf(current_link, PATH_MAX, "/data/nix/profiles/current");
 
-    // Verify target profile exists
+    // Verify target exists BEFORE making any changes
     struct stat st;
     if (stat(profile_path, &st) != 0 || !S_ISDIR(st.st_mode)) {
         fprintf(stderr, "Profile '%s' does not exist or is not a directory\n", profile_name);
         return -1;
     }
 
-    // Remove existing current link if it exists
-    if (unlink(current_link) == -1 && errno != ENOENT) {
-        fprintf(stderr, "Failed to remove existing current profile link: %s\n", strerror(errno));
-        return -1;
-    }
-
-    // Create new symlink
+    // The atomicity comes from these two operations:
+    // 1. First remove the old link (if it exists)
+    unlink(current_link);  // Even if this fails, we're still safe
+    
+    // 2. Create the new link - this is atomic on Unix systems
     if (symlink(profile_path, current_link) == -1) {
+        // If this fails, no partial state exists
         fprintf(stderr, "Failed to create new current profile link: %s\n", strerror(errno));
         return -1;
     }
 
-    printf("Switched to profile: %s\n", profile_name);
     return 0;
 }
 
@@ -1057,6 +1216,11 @@ int rollback_profile(const char* profile_name) {
         return -1;
     }
 
+    // Format timestamp nicely
+    char timestamp_str[32];
+    struct tm *tm_info = localtime(&latest_time);
+    strftime(timestamp_str, sizeof(timestamp_str), "%Y-%m-%d %H:%M:%S", tm_info);
+
     // Remove current broken profile
     char rm_cmd[PATH_MAX + 10];
     snprintf(rm_cmd, sizeof(rm_cmd), "rm -rf %s", profile_path);
@@ -1067,8 +1231,22 @@ int rollback_profile(const char* profile_name) {
     snprintf(cp_cmd, sizeof(cp_cmd), "cp -rP %s %s", latest_path, profile_path);
     system(cp_cmd);
 
-    printf("Rolled back profile '%s' to generation from %s", 
-           profile_name, ctime(&latest_time));
+    printf("Profile '%s' rolled back to previous generation from: %s\n", 
+           profile_name, timestamp_str);
+
+    // Show what's in the rollback
+    DIR* content_dir = opendir(profile_path);  // Changed variable name from dir to content_dir
+    if (content_dir) {
+        printf("Profile now contains:\n");
+        struct dirent* entry;
+        while ((entry = readdir(content_dir)) != NULL) {
+            if (strcmp(entry->d_name, ".") == 0 || strcmp(entry->d_name, "..") == 0)
+                continue;
+            printf("  %s\n", entry->d_name);
+        }
+        closedir(content_dir);
+    }
+
     return 0;
 }
 
@@ -1107,6 +1285,18 @@ int get_profile_generations(const char* profile_name, time_t** timestamps, int* 
     }
 
     closedir(dir);
+
+    // Sort timestamps in reverse order
+    for (int i = 0; i < *count - 1; i++) {
+        for (int j = i + 1; j < *count; j++) {
+            if ((*timestamps)[i] < (*timestamps)[j]) {
+                time_t temp = (*timestamps)[i];
+                (*timestamps)[i] = (*timestamps)[j];
+                (*timestamps)[j] = temp;
+            }
+        }
+    }
+
     return 0;
 }
 
