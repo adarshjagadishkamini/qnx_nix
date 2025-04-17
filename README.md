@@ -2,15 +2,15 @@
 
 A package management system for QNX that provides isolated environments and reproducible package management.
 
-## Core Architecture
+## Core Architecture 
 
 ### Store (/data/nix/store/)
-- Content-addressed storage using SHA256 hashes
-- Each package gets a unique hash-based directory
-- Binary files stored in bin/ subdirectory
-- Libraries stored in lib/ subdirectory
-- All store paths are immutable (read-only)
-- Database in .nix-db/ tracks dependencies
+- content-addressed storage with sha256
+- hash-based package directories
+- binaries in bin/
+- libraries in lib/ 
+- read-only paths
+- dependency tracking in db
 
 ### Profiles (/data/nix/profiles/)
 - Named environments (test1, test2, etc.)

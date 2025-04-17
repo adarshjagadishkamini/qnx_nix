@@ -5,7 +5,7 @@
 #include "nix_store.h"
 #include "nix_store_db.h"
 
-// Print usage instructions for the nix-store command
+// show help text
 void print_usage(void) {
     printf("Nix-like store for QNX\n");
     printf("Usage:\n");
@@ -31,14 +31,15 @@ void print_usage(void) {
 }
 
 int main(int argc, char* argv[]) {
-    // Check for minimum arguments
+    // verify args
     if (argc < 2) {
         print_usage();
         return 1;
     }
 
-    // === Store Initialization ===
+    // handle commands
     if (strcmp(argv[1], "--init") == 0) {
+        // init store dirs
         if (store_init() == 0) {
             printf("Store and profile directories initialized successfully under /data/nix/.\n");
             return 0;
@@ -46,24 +47,22 @@ int main(int argc, char* argv[]) {
         fprintf(stderr,"Store initialization failed.\n");
         return 1;
     }
-
-    // === Basic Store Operations ===
     else if (strcmp(argv[1], "--add") == 0) {
-        // Add single file/directory without dependency scanning
+        // add single item
         if (argc < 4) { fprintf(stderr,"Error: Missing arguments for --add. Usage: --add <source_path> <base_name>\n"); return 1; }
         if (add_to_store(argv[2], argv[3], 0) == 0) return 0;
         fprintf(stderr,"Failed to add '%s' to store.\n", argv[3]);
         return 1;
     }
     else if (strcmp(argv[1], "--add-recursively") == 0) {
-        // Add directory recursively without dependency scanning
+        // add dir recursively
         if (argc < 4) { fprintf(stderr,"Error: Missing arguments for --add-recursively. Usage: --add-recursively <source_dir> <base_name>\n"); return 1; }
         if (add_to_store(argv[2], argv[3], 1) == 0) return 0;
         fprintf(stderr,"Failed to add '%s' recursively to store.\n", argv[3]);
         return 1;
     }
     else if (strcmp(argv[1], "--add-with-deps") == 0) {
-        // Add file/directory with auto-detected dependencies using ldd
+        // add with scanned deps
         if (argc < 4) { fprintf(stderr,"Error: Missing arguments for --add-with-deps. Usage: --add-with-deps <source_path> <base_name>\n"); return 1; }
 
         char** deps = NULL;
@@ -87,7 +86,7 @@ int main(int argc, char* argv[]) {
         return (result == 0) ? 0 : 1;
     }
     else if (strcmp(argv[1], "--add-with-explicit-deps") == 0) {
-        // Add file/directory with explicitly specified dependencies
+        // add with manual deps
         if (argc < 4) { fprintf(stderr,"Error: Missing arguments for --add-with-explicit-deps. Usage: --add-with-explicit-deps <source_path> <base_name> [dep_store_path...]\n"); return 1; }
 
         int deps_count = argc - 4;
@@ -109,7 +108,7 @@ int main(int argc, char* argv[]) {
         return 0;
     }
     else if (strcmp(argv[1], "--add-boot-libs") == 0) {
-        // Scan and add QNX boot libraries to store
+        // add qnx boot libs
         int count = add_boot_libraries();
         if (count < 0) {
             fprintf(stderr,"Failed to add boot libraries.\n");
@@ -118,9 +117,9 @@ int main(int argc, char* argv[]) {
         return 0;
     }
 
-    // === Profile Management ===
+    // profile management
     else if (strcmp(argv[1], "--install") == 0) {
-        // Install package from store into a profile
+        // install to profile
         if (argc < 3) { fprintf(stderr,"Error: Missing store path for --install\n"); print_usage(); return 1; }
         const char* store_path_to_install = argv[2];
         const char* profile_name = (argc > 3) ? argv[3] : "default";
@@ -141,7 +140,7 @@ int main(int argc, char* argv[]) {
         return 1;
     }
     else if (strcmp(argv[1], "--create-profile") == 0) {
-        // Create new empty profile
+        // create new profile
         if (argc < 3) {
             fprintf(stderr, "Error: Missing profile name\n");
             return 1;
@@ -149,7 +148,7 @@ int main(int argc, char* argv[]) {
         return create_profile(argv[2]);
     }
     else if (strcmp(argv[1], "--switch-profile") == 0) {
-        // Change active profile
+        // switch active profile
         if (argc < 3) {
             fprintf(stderr, "Error: Missing profile name\n");
             return 1;
@@ -159,19 +158,19 @@ int main(int argc, char* argv[]) {
 
     // === Store Maintenance ===
     else if (strcmp(argv[1], "--verify") == 0) {
-        // Verify integrity of store path
+        // verify store path
         if (argc < 3) { fprintf(stderr,"Error: Missing path for --verify\n"); return 1; }
         int result = verify_store_path(argv[2]);
         return (result == 0) ? 0 : 1;
     }
     else if (strcmp(argv[1], "--gc") == 0) {
-        // Run garbage collection
+        // run garbage collection
         return (gc_collect_garbage() == 0) ? 0 : 1;
     }
 
     // === Query Operations ===
     else if (strcmp(argv[1], "--query-references") == 0) {
-        // Show package dependencies
+        // show dependencies
         if (argc < 3) { fprintf(stderr,"Error: Missing path for --query-references\n"); return 1; }
 
         char** refs = db_get_references(argv[2]);
@@ -195,7 +194,7 @@ int main(int argc, char* argv[]) {
 
     // === GC Root Management ===
     else if (strcmp(argv[1], "--add-root") == 0) {
-        // Register GC root to prevent collection
+        // register GC root
         if (argc < 3) { fprintf(stderr,"Error: Missing store path for --add-root\n"); return 1; }
         if (db_add_root(argv[2]) != 0) {
             fprintf(stderr,"Failed to add GC root.\n");
@@ -204,7 +203,7 @@ int main(int argc, char* argv[]) {
         return 0;
     }
     else if (strcmp(argv[1], "--remove-root") == 0) {
-        // Unregister GC root
+        // unregister GC root
         if (argc < 3) { fprintf(stderr,"Error: Missing store path for --remove-root\n"); return 1; }
         if(db_remove_root(argv[2]) != 0) {
             fprintf(stderr,"Failed to remove GC root.\n");
@@ -215,7 +214,7 @@ int main(int argc, char* argv[]) {
 
     // === Profile Listing and Information ===
     else if (strcmp(argv[1], "--list-profiles") == 0) {
-        // Show available profiles
+        // show profiles
         int count;
         ProfileInfo* profiles = list_profiles(&count);
         if (profiles) {
@@ -231,7 +230,7 @@ int main(int argc, char* argv[]) {
 
     // === Generation Management ===
     else if (strcmp(argv[1], "--rollback") == 0) {
-        // Rollback profile to previous generation
+        // rollback profile
         if (argc < 3) {
             fprintf(stderr, "Error: Missing profile name for rollback\n");
             return 1;
@@ -239,7 +238,7 @@ int main(int argc, char* argv[]) {
         return rollback_profile(argv[2]);
     }
     else if (strcmp(argv[1], "--list-generations") == 0) {
-        // List available generations for a profile
+        // list generations
         if (argc < 3) {
             fprintf(stderr, "Error: Missing profile name\n");
             return 1;
@@ -257,7 +256,7 @@ int main(int argc, char* argv[]) {
         return 1;
     }
     else if (strcmp(argv[1], "--switch-generation") == 0) {
-        // Switch to specific generation by timestamp
+        // switch generation
         if (argc < 4) {
             fprintf(stderr, "Error: Missing profile name or timestamp\n");
             return 1;
@@ -265,7 +264,7 @@ int main(int argc, char* argv[]) {
         return switch_profile_generation(argv[2], atol(argv[3]));
     }
     else {
-        // Handle unknown command
+        // unknown command
         fprintf(stderr,"Unknown command: %s\n", argv[1]);
         print_usage();
         return 1;

@@ -9,7 +9,7 @@
 #include <sys/stat.h>
 #include "nix_store.h"
 
-// Essential QNX utilities that should always be available
+// required system utilities
 static const char* essential_utils[] = {
     "/system/bin/bash",
     "/proc/boot/ls",
@@ -22,7 +22,7 @@ static const char* essential_utils[] = {
     NULL
 };
 
-// Helper function to find store path for essential util
+// find tool in store
 static char* find_store_path_for_util(const char* util_path) {
     const char* util_name = strrchr(util_path, '/');
     if (!util_name) return NULL;
@@ -53,6 +53,7 @@ static char* find_store_path_for_util(const char* util_path) {
     return result;
 }
 
+// set up shell env
 static void setup_environment(const char* profile_path) {
     char lib_path[PATH_MAX];
     char bin_path[PATH_MAX];
