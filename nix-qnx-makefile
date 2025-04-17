@@ -6,7 +6,7 @@ INCLUDES = -I$(QNX_TARGET)/usr/include
 
 # Source files and targets
 BINS = nix-store nix-shell-qnx
-SOURCES = sha256.c nix_store.c nix_store_db.c nix_store_mgr.c nix_gc.c main.c nix_shell.c
+SOURCES = sha256.c nix_store.c nix_store_db.c nix_gc.c main.c nix_shell.c
 OBJECTS = $(SOURCES:.c=.o)
 
 # Default target

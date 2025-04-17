@@ -3,20 +3,18 @@ QNX Nix Store Package Installation Process
 
 1. Directory Structure
 ------------------------
-/data/nix/                   # Base directory (not qnix)
-├── store/                    # Content-addressed store
-│   ├── <hash>-package/      # Individual packages
-│   │   ├── bin/            # Executables
-│   │   └── lib/            # Libraries
-│   └── .nix-db/            # Package database
-│       ├── db              # Package records
-│       └── roots           # GC roots
+/data/nix/                   # Base directory
+├── store/                   # Content-addressed store
+│   ├── <hash>-package/     # Individual packages
+│   │   ├── bin/           # Executables
+│   │   └── lib/           # Libraries
+│   └── .nix-db/           # Package database
 └── profiles/               # User environments
     ├── test1/             # Named profile
     │   ├── bin/          # Wrapper scripts
     │   └── lib/          # Library symlinks
-    ├── test1-<timestamp>  # Generation backup
-    └── current -> test1   # Current profile
+    ├── test1-<timestamp> # Generation backup
+    └── current -> test1  # Current profile
 
 2. Installation Process
 ------------------------
