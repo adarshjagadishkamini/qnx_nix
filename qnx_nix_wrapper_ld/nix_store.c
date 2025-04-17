@@ -564,45 +564,52 @@ int scan_dependencies(const char* exec_path, char*** deps_out) {
  // =========================================================================
  
  
- // Add /proc/boot libraries to store
- int add_boot_libraries(void) {
-     DIR* dir = opendir("/proc/boot");
-     if (!dir) {
-         fprintf(stderr, "Failed to open /proc/boot: %s\n", strerror(errno));
-         return -1;
-     }
- 
-     int count = 0;
-     struct dirent* entry;
-     char path[PATH_MAX];
- 
-     printf("Scanning /proc/boot for libraries...\n");
-     while ((entry = readdir(dir)) != NULL) {
-         if (strcmp(entry->d_name, ".") == 0 || strcmp(entry->d_name, "..") == 0) {
-             continue;
-         }
- 
-         if (strstr(entry->d_name, ".so") != NULL) {
-              int path_len = snprintf(path, PATH_MAX, "/proc/boot/%s", entry->d_name);
-              if (path_len < 0 || path_len >= PATH_MAX) {
-                  fprintf(stderr, "  Skipping boot library, path too long: %s\n", entry->d_name);
-                  continue;
-              }
- 
-             printf("  Attempting to add: %s\n", path);
-             // Use add_to_store (which now calls add_to_store_with_deps internally)
-             if (add_to_store(path, entry->d_name, 0) == 0) {
-                 count++;
-             } else {
-                  fprintf(stderr, "  Failed to add %s to store.\n", path);
-             }
-         }
-     }
- 
-     closedir(dir);
-     printf("Added %d boot libraries to the store.\n", count);
-     return count;
- }
+ // Add /proc/boot and /system/bin libraries and binaries to store
+int add_boot_libraries(void) {
+    const char* system_paths[] = {"/proc/boot", "/system/bin", NULL};
+    int total_count = 0;
+
+    for (const char** sys_path = system_paths; *sys_path != NULL; sys_path++) {
+        DIR* dir = opendir(*sys_path);
+        if (!dir) {
+            fprintf(stderr, "Failed to open %s: %s\n", *sys_path, strerror(errno));
+            continue;
+        }
+
+        int path_count = 0;
+        struct dirent* entry;
+        char path[PATH_MAX];
+
+        printf("Scanning %s for libraries and binaries...\n", *sys_path);
+        while ((entry = readdir(dir)) != NULL) {
+            if (strcmp(entry->d_name, ".") == 0 || strcmp(entry->d_name, "..") == 0) {
+                continue;
+            }
+
+            // Accept both .so libraries and executable binaries
+            if (strstr(entry->d_name, ".so") != NULL || strchr(entry->d_name, '.') == NULL) {
+                int path_len = snprintf(path, PATH_MAX, "%s/%s", *sys_path, entry->d_name);
+                if (path_len < 0 || path_len >= PATH_MAX) {
+                    fprintf(stderr, "  Skipping, path too long: %s\n", entry->d_name);
+                    continue;
+                }
+
+                printf("  Attempting to add: %s\n", path);
+                if (add_to_store(path, entry->d_name, 0) == 0) {
+                    path_count++;
+                } else {
+                    fprintf(stderr, "  Failed to add %s to store.\n", path);
+                }
+            }
+        }
+        closedir(dir);
+        printf("Added %d items from %s to the store.\n", path_count, *sys_path);
+        total_count += path_count;
+    }
+
+    printf("Added total %d items to the store.\n", total_count);
+    return total_count;
+}
  
  // =========================================================================
  // ---- NEW PROFILE FUNCTIONS ----

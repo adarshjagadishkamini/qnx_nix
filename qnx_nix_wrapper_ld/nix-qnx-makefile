@@ -1,21 +1,22 @@
-# Makefile for QNX Nix-like store implementation
-
 # QNX compiler and flags
 QCC = qcc
 CFLAGS = -Vgcc_ntoaarch64le -g -Wall -Wno-parentheses
 LDFLAGS = -lsocket
 INCLUDES = -I$(QNX_TARGET)/usr/include
 
-# Source files
-SOURCES = sha256.c nix_store.c nix_store_db.c nix_store_mgr.c nix_gc.c main.c
+# Source files and targets
+BINS = nix-store nix-shell-qnx
+SOURCES = sha256.c nix_store.c nix_store_db.c nix_store_mgr.c nix_gc.c main.c nix_shell.c
 OBJECTS = $(SOURCES:.c=.o)
-TARGET = nix-store
 
 # Default target
-all: $(TARGET)
+all: $(BINS)
 
-# Link the executable
-$(TARGET): $(OBJECTS)
+# Link the executables
+nix-store: $(filter-out nix_shell.o,$(OBJECTS))
+	$(QCC) $(CFLAGS) -o $@ $^ $(LDFLAGS)
+
+nix-shell-qnx: nix_shell.o nix_store.o sha256.o nix_store_db.o
 	$(QCC) $(CFLAGS) -o $@ $^ $(LDFLAGS)
 
 # Compile source files
@@ -24,19 +25,21 @@ $(TARGET): $(OBJECTS)
 
 # Clean the build
 clean:
-	rm -f $(OBJECTS) $(TARGET)
+	rm -f $(OBJECTS) $(BINS)
 
-# Install the executable
-install: $(TARGET)
-	cp $(TARGET) $(QNX_TARGET)/usr/bin/
+# Install the executables
+install: $(BINS)
+	cp nix-store $(QNX_TARGET)/usr/bin/
+	cp nix-shell-qnx $(QNX_TARGET)/usr/bin/
 	mkdir -p $(QNX_TARGET)/etc/nix-store
 	cp config.ini $(QNX_TARGET)/etc/nix-store/
 
 # Package for deployment
-package: $(TARGET)
+package: $(BINS)
 	mkdir -p pkg/usr/bin
 	mkdir -p pkg/etc/nix-store
-	cp $(TARGET) pkg/usr/bin/
+	cp nix-store pkg/usr/bin/
+	cp nix-shell-qnx pkg/usr/bin/
 	cp config.ini pkg/etc/nix-store/
 	mkifs -v -r ./pkg nix-store.ifs
 
