@@ -1,5 +1,0 @@
-./sl:
-	libncursesw.so.1 => /proc/boot/libncursesw.so.1 (0x423d04f000)
-	libc.so.6 => /proc/boot/libc.so.6 (0x423d0bb000)
-	libgcc_s.so.1 => /proc/boot/libgcc_s.so.1 (0x423d16e000)
-	libregex.so.1 => /proc/boot/libregex.so.1 (0x423d183000)
