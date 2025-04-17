@@ -1,0 +1,46 @@
+# QNX compiler and flags
+QCC = qcc
+CFLAGS = -Vgcc_ntoaarch64le -g -Wall -Wno-parentheses
+LDFLAGS = -lsocket
+INCLUDES = -I$(QNX_TARGET)/usr/include
+
+# Source files and targets
+BINS = qnix qnix-env
+SOURCES = sha256.c nix_store.c nix_store_db.c nix_store_mgr.c nix_gc.c main.c nix_shell.c
+OBJECTS = $(SOURCES:.c=.o)
+
+# Default target
+all: $(BINS)
+
+# Link the executables
+qnix: $(filter-out nix_shell.o,$(OBJECTS))
+	$(QCC) $(CFLAGS) -o $@ $^ $(LDFLAGS)
+
+qnix-env: nix_shell.o nix_store.o sha256.o nix_store_db.o
+	$(QCC) $(CFLAGS) -o $@ $^ $(LDFLAGS)
+
+# Compile source files
+%.o: %.c
+	$(QCC) $(CFLAGS) $(INCLUDES) -c $< -o $@
+
+# Clean the build
+clean:
+	rm -f $(OBJECTS) $(BINS)
+
+# Install the executables
+install: $(BINS)
+	cp qnix $(QNX_TARGET)/usr/bin/
+	cp qnix-env $(QNX_TARGET)/usr/bin/
+	mkdir -p $(QNX_TARGET)/etc/qnix-store
+	cp config.ini $(QNX_TARGET)/etc/qnix-store/
+
+# Package for deployment
+package: $(BINS)
+	mkdir -p pkg/usr/bin
+	mkdir -p pkg/etc/qnix-store
+	cp qnix pkg/usr/bin/
+	cp qnix-env pkg/usr/bin/
+	cp config.ini pkg/etc/qnix-store/
+	mkifs -v -r ./pkg qnix.ifs
+
+.PHONY: all clean install package

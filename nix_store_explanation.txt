@@ -3,7 +3,7 @@ QNX Nix Store Package Installation Process
 
 1. Directory Structure
 ------------------------
-/data/nix/
+/data/nix/                   # Base directory (not qnix)
 ├── store/                    # Content-addressed store
 │   ├── <hash>-package/      # Individual packages
 │   │   ├── bin/            # Executables
@@ -15,7 +15,7 @@ QNX Nix Store Package Installation Process
     ├── test1/             # Named profile
     │   ├── bin/          # Wrapper scripts
     │   └── lib/          # Library symlinks
-    ├── test1-1234567890  # Generation backup
+    ├── test1-<timestamp>  # Generation backup
     └── current -> test1   # Current profile
 
 2. Installation Process
@@ -38,15 +38,26 @@ b) Profile Installation:
 3. Wrapper Script Example
 ------------------------
 #!/bin/sh
-PROFILE_DIR="$(cd "$(dirname "$0")/.." && pwd)"
+# Wrapper for executable
+# Save original state
+ORIG_PWD="$(pwd)"
+ORIG_LD_LIBRARY_PATH="$LD_LIBRARY_PATH"
+
+# Resolve script and profile paths
+SCRIPT_DIR="$(dirname "$0")"
+PROFILE_DIR="$(cd "$SCRIPT_DIR/.." && pwd)"
 PROFILE_LIB="$PROFILE_DIR/lib"
+
+# Execute target with clean environment
+cd "$ORIG_PWD"
 exec env - \
     PATH="$PATH" \
+    PWD="$ORIG_PWD" \
     HOME="$HOME" \
     USER="$USER" \
     TERM="$TERM" \
     LD_LIBRARY_PATH="$PROFILE_LIB" \
-    "/data/nix/store/<hash>-pkg/bin/program" "$@"
+    '/data/nix/store/<hash>-pkg/bin/program' "$@"
 
 4. Dependency Management
 ------------------------
@@ -91,7 +102,7 @@ exec env - \
 9. Common Operations
 ------------------------
 a) Adding Package:
-   ./nix-store --add-with-deps /path/to/binary name
+   ./qnix-store --add-with-deps /path/to/binary name
 
 b) Creating Profile:
    ./nix-store --create-profile name

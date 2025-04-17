@@ -18,9 +18,9 @@ echo "2. Adding boot libraries..."
 
 # Add multiple test packages
 echo "3. Adding test packages..."
-./nix-store --add-with-deps /system/bin/head head >/dev/null
-./nix-store --add-with-deps /system/bin/tail tail >/dev/null
-./nix-store --add-with-deps /proc/boot/ls ls >/dev/null
+./nix-store --add-with-deps head head >/dev/null
+./nix-store --add-with-deps tail tail >/dev/null
+#./nix-store --add-with-deps ls ls >/dev/null
 ./nix-store --add-with-deps sl sl >/dev/null
 
 
