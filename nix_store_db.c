@@ -71,6 +71,35 @@ int db_register_path(const char* path, const char** references) {
     while (fread(&check_entry, sizeof(check_entry), 1, db) == 1) {
         if (strcmp(check_entry.path, path) == 0) {
             exists = 1;
+
+            // Update references if they differ
+            if (references) {
+                int ref_changed = 0;
+                for (int i = 0; i < check_entry.ref_count; i++) {
+                    if (strcmp(check_entry.references[i], references[i]) != 0) {
+                        ref_changed = 1;
+                        break;
+                    }
+                }
+
+                if (ref_changed) {
+                    memset(check_entry.references, 0, sizeof(check_entry.references));
+                    check_entry.ref_count = 0;
+                    for (int i = 0; references[i] != NULL && i < 10; i++) {
+                        strncpy(check_entry.references[i], references[i], PATH_MAX - 1);
+                        check_entry.references[i][PATH_MAX - 1] = '\0'; // Ensure null termination
+                        check_entry.ref_count++;
+                    }
+
+                    fseek(db, -sizeof(check_entry), SEEK_CUR);
+                    if (fwrite(&check_entry, sizeof(check_entry), 1, db) != 1) {
+                        fprintf(stderr, "Failed to update references for %s in database: %s\n", path, strerror(errno));
+                        fclose(db);
+                        return -1;
+                    }
+                }
+            }
+
             break;
         }
     }
@@ -188,8 +217,10 @@ static int remove_line_from_file(const char* filepath, const char* line_to_remov
     snprintf(temp_path, PATH_MAX, "%s%s", filepath, TEMP_SUFFIX);
 
     FILE* original = fopen(filepath, "r");
-    // It's okay if the original file doesn't exist yet when removing.
-    // if (!original) return -1; // Or maybe return 0 if file not existing is ok?
+    // If file doesn't exist, there's nothing to remove - return success
+    if (!original) {
+        return 0; 
+    }
 
     FILE* temp = fopen(temp_path, "w");
     if (!temp) {
@@ -244,7 +275,7 @@ static int remove_line_from_file(const char* filepath, const char* line_to_remov
 
 // Remove a path from the database (called by GC)
 int db_remove_path(const char* path) {
-    // --- Remove from main DB file ---
+    // Check if the path exists in the database
     FILE* db = open_db("r");
     // If db doesn't exist, nothing to remove
     if (!db) return 0;
@@ -294,10 +325,10 @@ int db_remove_path(const char* path) {
         remove(temp_db_path); // No change needed, remove temp file
     }
 
-    // --- Also remove from roots file ---
+    // Also remove from roots file 
     // This uses the helper function
     remove_line_from_file(ROOTS_PATH, path);
-    // Ignore return value for roots removal? If path wasn't a root, that's ok.
+   
 
     return 0; // Success
 }
