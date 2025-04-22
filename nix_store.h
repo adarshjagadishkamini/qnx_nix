@@ -9,12 +9,12 @@
 #include <errno.h>
 #include <stdio.h>
 #include <sys/stat.h>
-#include <sys/neutrino.h>  // QNX specific header
+#include <sys/neutrino.h>  
 #include <sys/procfs.h>    // QNX process filesystem
 #include <sys/iofunc.h>    // QNX I/O functions
 #include <sys/dispatch.h>  // QNX message passing
 #include "sha256.h"        // Our custom SHA-256 implementation
-#include <limits.h> // PATH_MAX needed if not implicitly included
+#include <limits.h> // PATH_MAX
 
 // Define the base store path
 #define NIX_STORE_PATH "/data/nix/store"
@@ -38,16 +38,10 @@ int verify_store_path(const char* path);
 int gc_collect_garbage(void);
 int scan_dependencies(const char* exec_path, char*** deps_out);
 int add_boot_libraries(void);
-
-// Add new function prototypes
 int rollback_profile(const char* profile_name);
 int get_profile_generations(const char* profile_name, time_t** timestamps, int* count);
 int switch_profile_generation(const char* profile_name, time_t timestamp);
 
-// ---- NEW FUNCTION ----
-// Install a store path into a profile (creates symlinks/wrappers)
-int install_to_profile(const char* store_path, const char* profile_name);
-// ---- END NEW FUNCTION ----
 
 // Structure to store profile information
 typedef struct {
@@ -58,7 +52,7 @@ typedef struct {
 
 // Profile-related functions - cleaned up API
 int create_profile(const char* profile_name);                           // Creates empty profile
-int install_to_profile(const char* store_path, const char* profile_name); // Installs package into profile
+int install_to_profile(const char* store_path, const char* profile_name); // Installs package into profile (creates wrappers/symlinks)
 int switch_profile(const char* profile_name);                          // Changes current profile
 ProfileInfo* list_profiles(int* count);                                // Lists available profiles
 void free_profile_info(ProfileInfo* profiles, int count);             // Cleanup helper

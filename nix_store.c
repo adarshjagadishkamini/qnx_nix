@@ -16,7 +16,7 @@
  #endif
  
  
- // Define NIX_STORE_PATH if not defined in nix_store.h
+
  #ifndef NIX_STORE_PATH
  #define NIX_STORE_PATH "/data/nix/store"
  #endif
@@ -368,36 +368,38 @@
  
  // Verify a store path
  int verify_store_path(const char* path) {
-     // Basic verification - check if the path exists and is in the store
+     // Check if path exists and is in store
      struct stat st;
      if (stat(path, &st) == -1) {
-          fprintf(stderr, "Verify failed: Path %s does not exist or is inaccessible (%s).\n", path, strerror(errno));
+         fprintf(stderr, "Verify failed: Path %s does not exist or is inaccessible (%s).\n", 
+                 path, strerror(errno));
          return -1;
      }
  
-     // Check if the path is inside the store and safe
-     if (strncmp(path, NIX_STORE_PATH, strlen(NIX_STORE_PATH)) != 0 || strstr(path, "..") != NULL) {
-          fprintf(stderr, "Verify failed: Path %s is not within the store directory %s or contains '..'.\n", path, NIX_STORE_PATH);
+     // Check if path is inside store and safe
+     if (strncmp(path, NIX_STORE_PATH, strlen(NIX_STORE_PATH)) != 0 || 
+         strstr(path, "..") != NULL) {
+         fprintf(stderr, "Verify failed: Path %s is not within store or contains '..'.\n", path);
          return -1;
      }
  
-     // Check if the path is registered in the database
+     // Check if registered in database
      if (!db_path_exists(path)) {
-          fprintf(stderr, "Verify failed: Path %s is not registered in the database.\n", path);
+         fprintf(stderr, "Verify failed: Path %s not registered in database.\n", path);
          return -1;
      }
  
-     // TODO: Add hash verification here if hashes are stored and computed during add
+     // Verify path contents match stored hash
+     if (db_verify_path_hash(path) != 0) {
+         fprintf(stderr, "Verify failed: Path %s contents do not match stored hash.\n", path);
+         return -1;
+     }
  
      printf("Path %s verified successfully.\n", path);
      return 0;
  }
  
- 
- // =========================================================================
- // MODIFIED FUNCTION: scan_dependencies (Using ldd)
- // =========================================================================
- 
+
 // Helper function to find store path for a boot library (improved version)
 static char* find_store_path_for_boot_lib(const char* boot_path) {
     const char* lib_name = strrchr(boot_path, '/');

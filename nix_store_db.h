@@ -24,4 +24,9 @@ int db_register_profile(const char* profile_name, const char* path);
 int db_remove_profile(const char* profile_name);
 char* db_get_profile_path(const char* profile_name);
 
+// hash verification
+int db_store_hash(const char* path, const char* hash);
+char* db_get_hash(const char* path);
+int db_verify_path_hash(const char* path);
+
 #endif

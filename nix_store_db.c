@@ -11,20 +11,23 @@
 #include <sys/mman.h>
 #include <time.h>
 #include <limits.h>
+#include <dirent.h>
 #include "nix_store.h" // For NIX_STORE_PATH definition
 #include "nix_store_db.h"
+#include "sha256.h" // For SHA256 functions
 
 // Define the database file paths
 #define DB_PATH NIX_STORE_PATH "/.nix-db/db"
 #define ROOTS_PATH NIX_STORE_PATH "/.nix-db/roots"
 #define TEMP_SUFFIX ".tmp" // Suffix for temporary files
 
-// Structure for database entries (remains the same)
+// Structure for database entries
 typedef struct {
     char path[PATH_MAX];
     char references[10][PATH_MAX];  // Up to 10 references per entry
     int ref_count;
     time_t creation_time;
+    char hash[SHA256_DIGEST_STRING_LENGTH];  // Add hash field
 } DBEntry;
 
 // Helper function to ensure the DB directory exists
@@ -44,7 +47,6 @@ static int ensure_db_dir_exists(void) {
     }
     return 0;
 }
-
 
 // Open the database file
 static FILE* open_db(const char* mode) {
@@ -115,7 +117,7 @@ int db_register_path(const char* path, const char** references) {
     return 0;
 }
 
-// Check if a path exists in the database (remains the same)
+// Check if a path exists in the database
 int db_path_exists(const char* path) {
     FILE* db = open_db("r");
     if (!db) {
@@ -134,7 +136,7 @@ int db_path_exists(const char* path) {
     return 0;
 }
 
-// Get all references for a path (remains the same logic)
+// Get all references for a path
 char** db_get_references(const char* path) {
     FILE* db = open_db("r");
     if (!db) {
@@ -227,13 +229,11 @@ static int remove_line_from_file(const char* filepath, const char* line_to_remov
         fclose(original);
     }
 
-
     if (fclose(temp) != 0) {
         fprintf(stderr, "Failed to close temporary file %s: %s\n", temp_path, strerror(errno));
         remove(temp_path);
         return -1;
     }
-
 
     // Replace the old file with the new one
     if (rename(temp_path, filepath) == -1) {
@@ -245,7 +245,6 @@ static int remove_line_from_file(const char* filepath, const char* line_to_remov
     // Return 1 if removed, 0 if not found (but no error)
     return found ? 1 : 0;
 }
-
 
 // Remove a path from the database (called by GC)
 int db_remove_path(const char* path) {
@@ -307,7 +306,7 @@ int db_remove_path(const char* path) {
     return 0; // Success
 }
 
-// ---- NEW FUNCTION: Add a GC Root ----
+// Add a GC Root
 int db_add_root(const char* path) {
     // 1. Verify the path exists in the store database first
     if (!db_path_exists(path)) {
@@ -367,7 +366,7 @@ int db_add_root(const char* path) {
     return 0;
 }
 
-// ---- NEW FUNCTION: Remove a GC Root ----
+// Remove a GC Root
 int db_remove_root(const char* path) {
     // We just need to remove the line from the roots file
     // The helper function does the work.
@@ -384,6 +383,122 @@ int db_remove_root(const char* path) {
          fprintf(stderr, "Error occurred while trying to remove root: %s\n", path);
          return -1; // Error during file operations
     }
+}
+
+// Store hash for path
+int db_store_hash(const char* path, const char* hash) {
+    FILE* db = open_db("r+");
+    if (!db) return -1;
+
+    DBEntry entry;
+    int found = 0;
+    long pos = 0;
+
+    while (fread(&entry, sizeof(entry), 1, db) == 1) {
+        if (strcmp(entry.path, path) == 0) {
+            found = 1;
+            break;
+        }
+        pos = ftell(db);
+    }
+
+    if (found) {
+        strncpy(entry.hash, hash, SHA256_DIGEST_STRING_LENGTH - 1);
+        entry.hash[SHA256_DIGEST_STRING_LENGTH - 1] = '\0';
+        
+        fseek(db, pos, SEEK_SET);
+        if (fwrite(&entry, sizeof(entry), 1, db) != 1) {
+            fprintf(stderr, "Failed to update hash for %s\n", path);
+            fclose(db);
+            return -1;
+        }
+    }
+
+    fclose(db);
+    return found ? 0 : -1;
+}
+
+// Get stored hash for path
+char* db_get_hash(const char* path) {
+    FILE* db = open_db("r");
+    if (!db) return NULL;
+
+    DBEntry entry;
+    while (fread(&entry, sizeof(entry), 1, db) == 1) {
+        if (strcmp(entry.path, path) == 0) {
+            char* hash = strdup(entry.hash);
+            fclose(db);
+            return hash;
+        }
+    }
+
+    fclose(db);
+    return NULL;
+}
+
+// Verify path hash matches stored hash
+int db_verify_path_hash(const char* path) {
+    char* stored_hash = db_get_hash(path);
+    if (!stored_hash) {
+        fprintf(stderr, "No stored hash found for %s\n", path);
+        return -1;
+    }
+
+    // Compute current hash of path contents
+    char* current_hash = NULL;
+    struct stat st;
+    if (stat(path, &st) == 0) {
+        if (S_ISDIR(st.st_mode)) {
+            // For directories, hash the directory listing
+            DIR* dir = opendir(path);
+            if (dir) {
+                char content[4096] = {0};
+                struct dirent* entry;
+                while ((entry = readdir(dir)) != NULL) {
+                    if (strcmp(entry->d_name, ".") == 0 || 
+                        strcmp(entry->d_name, "..") == 0)
+                        continue;
+                    strcat(content, entry->d_name);
+                }
+                closedir(dir);
+                current_hash = sha256_hash_string((uint8_t*)content, strlen(content));
+            }
+        } else {
+            // For files, hash the file content
+            FILE* f = fopen(path, "rb");
+            if (f) {
+                uint8_t buffer[4096];
+                size_t bytes;
+                SHA256_CTX ctx;
+                sha256_init(&ctx);
+                while ((bytes = fread(buffer, 1, sizeof(buffer), f)) > 0) {
+                    sha256_update(&ctx, buffer, bytes);
+                }
+                uint8_t hash[SHA256_BLOCK_SIZE];
+                sha256_final(&ctx, hash);
+                current_hash = malloc(SHA256_DIGEST_STRING_LENGTH);
+                if (current_hash) {
+                    for (int i = 0; i < SHA256_BLOCK_SIZE; i++) {
+                        sprintf(current_hash + (i * 2), "%02x", hash[i]);
+                    }
+                    current_hash[SHA256_DIGEST_STRING_LENGTH - 1] = 0;
+                }
+                fclose(f);
+            }
+        }
+    }
+
+    if (!current_hash) {
+        free(stored_hash);
+        fprintf(stderr, "Failed to compute current hash for %s\n", path);
+        return -1;
+    }
+
+    int result = strcmp(stored_hash, current_hash);
+    free(stored_hash);
+    free(current_hash);
+
+    return result == 0 ? 0 : -1;
 }
 
 int db_register_profile(const char* profile_name, const char* path) {
