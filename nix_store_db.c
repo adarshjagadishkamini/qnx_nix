@@ -77,7 +77,6 @@ int db_register_path(const char* path, const char** references) {
 
     if (exists) {
         fclose(db);
-        // TODO: Should we update references if they differ? For now, just return success.
         printf("Path %s already registered in database.\n", path);
         return 0;
     }
@@ -110,9 +109,6 @@ int db_register_path(const char* path, const char** references) {
     }
 
     fclose(db);
-
-    // *** REMOVED AUTOMATIC ADDITION TO ROOTS ***
-    // We now require explicit use of db_add_root
 
     return 0;
 }
