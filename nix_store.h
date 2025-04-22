@@ -1,6 +1,3 @@
-/*
- * nix_store.h - Header for Nix-like store implementation on QNX
- */
 #ifndef NIX_STORE_H
 #define NIX_STORE_H
 

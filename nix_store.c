@@ -1,7 +1,4 @@
-/*
- * nix_store.c - Core implementation of Nix-like store for QNX
- */
-
+//qnix_store core functions
  #include "nix_store.h" // already includes stdio, stdlib, string, sys/stat, sys/types, unistd, errno
  #include "sha256.h"
  #include <limits.h>
