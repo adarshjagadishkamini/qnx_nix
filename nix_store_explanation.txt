@@ -100,7 +100,7 @@ exec env - \
 9. Common Operations
 ------------------------
 a) Adding Package:
-   ./qnix-store --add-with-deps /path/to/binary name
+   ./nix-store --add-with-deps /path/to/binary name
 
 b) Creating Profile:
    ./nix-store --create-profile name
