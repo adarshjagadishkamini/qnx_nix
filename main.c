@@ -212,8 +212,8 @@ int main(int argc, char* argv[]) {
         return 0;
     }
 
-    // === Profile Listing and Information ===
-    else if (strcmp(argv[1], "--list-profiles") == 0) {
+    /Profile Listing and Information
+        else if (strcmp(argv[1], "--list-profiles") == 0) {
         // show profiles
         int count;
         ProfileInfo* profiles = list_profiles(&count);
@@ -228,7 +228,7 @@ int main(int argc, char* argv[]) {
         return 1;
     }
 
-    // === Generation Management ===
+    //Generation Management
     else if (strcmp(argv[1], "--rollback") == 0) {
         // rollback profile
         if (argc < 3) {
