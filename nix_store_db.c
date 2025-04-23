@@ -1,6 +1,4 @@
-/*
- * nix_store_db.c - Database functionality for Nix-like store
- */
+//qnix Store Database.
 #include <stdio.h>
 #include <stdlib.h>
 #include <string.h>

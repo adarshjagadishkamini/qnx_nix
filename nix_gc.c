@@ -1,5 +1,5 @@
 
-//  garbage collector implementation
+// garbage collector implementation
 #include <stdio.h>
 #include <stdlib.h>
 #include <string.h>
