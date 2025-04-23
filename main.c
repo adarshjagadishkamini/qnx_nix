@@ -156,7 +156,7 @@ int main(int argc, char* argv[]) {
         return switch_profile(argv[2]);
     }
 
-    // === Store Maintenance ===
+    //Store Maintenance
     else if (strcmp(argv[1], "--verify") == 0) {
         // verify store path
         if (argc < 3) { fprintf(stderr,"Error: Missing path for --verify\n"); return 1; }
@@ -168,7 +168,7 @@ int main(int argc, char* argv[]) {
         return (gc_collect_garbage() == 0) ? 0 : 1;
     }
 
-    // === Query Operations ===
+    //Query Operations
     else if (strcmp(argv[1], "--query-references") == 0) {
         // show dependencies
         if (argc < 3) { fprintf(stderr,"Error: Missing path for --query-references\n"); return 1; }
@@ -192,7 +192,7 @@ int main(int argc, char* argv[]) {
         return 1;
     }
 
-    // === GC Root Management ===
+    //GC Root Management
     else if (strcmp(argv[1], "--add-root") == 0) {
         // register GC root
         if (argc < 3) { fprintf(stderr,"Error: Missing store path for --add-root\n"); return 1; }
