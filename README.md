@@ -91,8 +91,6 @@ nix-store --add-boot-libs
 # Add package with auto-detected dependencies
 nix-store --add-with-deps /path/to/binary name
 
-# Add package with explicit dependencies
-nix-store --add-with-explicit-deps /path/to/binary name dep1 dep2
 ```
 
 ### Profile Management
@@ -101,7 +99,7 @@ nix-store --add-with-explicit-deps /path/to/binary name dep1 dep2
 nix-store --create-profile name
 
 # Install package
-nix-store --install store-path [profile-name]
+nix-store --install store-path profile-name
 
 # List profiles
 nix-store --list-profiles
@@ -125,16 +123,16 @@ nix-shell-qnx profile-name
 ## Directory Structure
 ```
 /data/nix/
-├── store/                      # Package store
+├── store/                     # Package store
 │   ├── <hash>-package/        # Individual packages
-│   │   ├── bin/              # Executables
-│   │   └── lib/              # Libraries
-│   └── .nix-db/              # Package database
+│   │   ├── bin/               # Executables
+│   │   └── lib/               # Libraries
+│   └── .nix-db/               # Package database
 └── profiles/                  # User environments
-    ├── test1/                # Named profile
-    │   ├── bin/             # Wrapper scripts
-    │   └── lib/             # Library symlinks
-    └── current -> test1     # Current profile
+    ├── test1/                 # Named profile
+    │   ├── bin/               # Wrapper scripts
+    │   └── lib/               # Library symlinks
+    └── current -> test1       # Current profile
 ```
 
 ## Implementation Details

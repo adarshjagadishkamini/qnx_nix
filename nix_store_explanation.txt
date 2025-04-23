@@ -5,16 +5,16 @@ QNX Nix Store Package Installation Process
 ------------------------
 /data/nix/                   # store root
 ├── store/                   # package store
-│   ├── <hash>-package/     # package dir
-│   │   ├── bin/           # binaries
-│   │   └── lib/           # libraries  
-│   └── .nix-db/           # database
-└── profiles/               # environments
-    ├── test1/             # profile
-    │   ├── bin/          # wrappers
-    │   └── lib/          # symlinks
-    ├── test1-<timestamp> # backup
-    └── current -> test1  # active profile
+│   ├── <hash>-package/      # package dir
+│   │   ├── bin/             # binaries
+│   │   └── lib/             # libraries  
+│   └── .nix-db/             # database
+└── profiles/                # environments
+    ├── test1/               # profile
+    │   ├── bin/             # wrappers
+    │   └── lib/             # symlinks
+    ├── test1-<timestamp>    # backup
+    └── current -> test1     # active profile
 
 2. Installation Process
 ------------------------
@@ -131,4 +131,4 @@ e) Rolling Back:
 - Shell environment: Check PATH setup
 - Generation backups: Verify timestamps
 - Set date at each boot for generations to work as intended
-```
+
