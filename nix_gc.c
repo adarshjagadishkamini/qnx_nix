@@ -1,4 +1,3 @@
-
 // garbage collector implementation
 #include <stdio.h>
 #include <stdlib.h>
@@ -29,12 +28,15 @@ typedef struct PathRef {
 static void mark_path(PathRef* list, const char* path);
 
 // add path to ref list
+// Returns: Updated list on success, or original list on allocation failure
+// Note: Memory allocation failure is considered non-fatal for GC since we can
+// still keep the existing list and try to continue with partial collection
 static PathRef* add_path_ref(PathRef* list, const char* path) {
     PathRef* ref = malloc(sizeof(PathRef));
     if (!ref) {
-         fprintf(stderr, "GC Error: Failed to allocate memory for path reference.\n");
-         // consider how to handle this - maybe exit? for now, return list.
-        return list;
+        fprintf(stderr, "GC Error: Failed to allocate memory for path reference.\n");
+        fprintf(stderr, "Warning: Continuing with partial path list.\n");
+        return list; // Return original list to allow partial collection
     }
 
     strncpy(ref->path, path, PATH_MAX - 1);
