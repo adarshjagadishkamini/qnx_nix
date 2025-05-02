@@ -21,6 +21,99 @@
  #define NIX_STORE_PATH "/data/nix/store"
  #endif
  
+ #ifndef MAX_GENERATIONS
+ #define MAX_GENERATIONS 5
+ #endif
+
+ #ifndef MIN_VALID_TIMESTAMP
+ #define MIN_VALID_TIMESTAMP 1746181969  // 2025-05-02 12:33
+ #endif
+ 
+ // Time management for generations
+ static int verify_system_time() {
+     struct timespec ts;
+     time_t current_time;
+     
+     // Try high-resolution clock first
+     if (clock_gettime(CLOCK_REALTIME, &ts) == 0) {
+         current_time = ts.tv_sec;
+     } else {
+         current_time = time(NULL);
+     }
+ 
+     // Basic sanity check - time should be after 2023
+     if (current_time < 1746181969  ) { 
+         return -1;
+     }
+ 
+     return 0;
+ }
+ 
+// Time synchronization and generation management
+static int cleanup_old_generations(const char* profile_name) {
+    time_t* timestamps;
+    int count;
+    
+    if (get_profile_generations(profile_name, &timestamps, &count) != 0) {
+        return -1;
+    }
+    
+    // Keep only MAX_GENERATIONS most recent generations
+    if (count > MAX_GENERATIONS) {
+        for (int i = MAX_GENERATIONS; i < count; i++) {
+            char old_gen_path[PATH_MAX];
+            snprintf(old_gen_path, PATH_MAX, "/data/nix/profiles/%s-%ld", 
+                    profile_name, timestamps[i]);
+            
+            // Remove old generation
+            char rm_cmd[PATH_MAX + 10];
+            snprintf(rm_cmd, sizeof(rm_cmd), "rm -rf %s", old_gen_path);
+            system(rm_cmd);
+            printf("Removed old generation: %s\n", old_gen_path);
+        }
+    }
+    
+    free(timestamps);
+    return 0;
+}
+
+// Enhanced create_generation with time validation and cleanup
+static int create_generation(const char* profile_name, time_t* timestamp) {
+    // First verify system time
+    if (verify_system_time() != 0) {
+        fprintf(stderr, "Error: System time appears incorrect\n");
+        return -1;
+    }
+    
+    struct timespec ts;
+    if (clock_gettime(CLOCK_REALTIME, &ts) == 0) {
+        *timestamp = ts.tv_sec;
+    } else {
+        *timestamp = time(NULL);
+    }
+    
+    // Additional validation
+    if (*timestamp < MIN_VALID_TIMESTAMP) {
+        fprintf(stderr, "Error: System time is before minimum valid date\n");
+        return -1;
+    }
+    
+    char backup_path[PATH_MAX];
+    snprintf(backup_path, PATH_MAX, "/data/nix/profiles/%s-%ld", 
+             profile_name, *timestamp);
+    
+    if (mkdir(backup_path, 0755) == -1) {
+        fprintf(stderr, "Failed to create generation directory: %s\n", 
+                strerror(errno));
+        return -1;
+    }
+    
+    // Cleanup old generations
+    cleanup_old_generations(profile_name);
+    
+    return 0;
+}
+ 
  // Initialize the store directory structure
  int store_init(void) {
      // Create the path hierarchy
@@ -258,39 +351,45 @@
          char cmd[PATH_MAX * 3];
          if (strncmp(source_path, "/proc/boot/", 11) == 0) {
              // Use dd for boot files to preserve all attributes
-             copy_len = snprintf(cmd, sizeof(cmd), 
-                     "dd if=%s of=%s bs=4096 conv=sync,noerror 2>/dev/null && chmod 755 %s", 
-                     source_path, dest_path, dest_path);
+             if (handle_procboot(source_path, dest_path) != 0) {
+                 fprintf(stderr, "Failed to handle procboot file %s\n", source_path);
+                 rmdir(store_path);
+                 free(store_path);
+                 if (dep_store_paths) {
+                     for (int i = 0; i < deps_count; i++) if(dep_store_paths[i]) free(dep_store_paths[i]);
+                     free(dep_store_paths);
+                 }
+                 return -1;
+             }
          } else {
              // Normal file copy for other files
              copy_len = snprintf(cmd, sizeof(cmd), "cp -P %s %s", source_path, dest_path);
-         }
-
-         if(copy_len < 0 || copy_len >= sizeof(cmd)) {
-             fprintf(stderr, "Error: Copy command exceeds buffer size for source %s\n", source_path);
-             rmdir(store_path);
-             free(store_path);
-             if (dep_store_paths) {
-                 for (int i = 0; i < deps_count; i++) if(dep_store_paths[i]) free(dep_store_paths[i]);
-                 free(dep_store_paths);
+             if(copy_len < 0 || copy_len >= sizeof(cmd)) {
+                 fprintf(stderr, "Error: Copy command exceeds buffer size for source %s\n", source_path);
+                 rmdir(store_path);
+                 free(store_path);
+                 if (dep_store_paths) {
+                     for (int i = 0; i < deps_count; i++) if(dep_store_paths[i]) free(dep_store_paths[i]);
+                     free(dep_store_paths);
+                 }
+                 return -1;
              }
-             return -1;
-         }
 
-         printf("Executing: %s\n", cmd);
-         int ret = system(cmd);
-         if (ret != 0) {
-             fprintf(stderr, "Failed to copy file %s to %s (system returned %d)\n", 
-                     source_path, dest_path, ret);
-             char rm_cmd[PATH_MAX + 10];
-             snprintf(rm_cmd, sizeof(rm_cmd), "rm -rf %s", store_path);
-             system(rm_cmd);
-             free(store_path);
-             if (dep_store_paths) {
-                 for (int i = 0; i < deps_count; i++) if(dep_store_paths[i]) free(dep_store_paths[i]);
-                 free(dep_store_paths);
+             printf("Executing: %s\n", cmd);
+             int ret = system(cmd);
+             if (ret != 0) {
+                 fprintf(stderr, "Failed to copy file %s to %s (system returned %d)\n", 
+                         source_path, dest_path, ret);
+                 char rm_cmd[PATH_MAX + 10];
+                 snprintf(rm_cmd, sizeof(rm_cmd), "rm -rf %s", store_path);
+                 system(rm_cmd);
+                 free(store_path);
+                 if (dep_store_paths) {
+                     for (int i = 0; i < deps_count; i++) if(dep_store_paths[i]) free(dep_store_paths[i]);
+                     free(dep_store_paths);
+                 }
+                 return -1;
              }
-             return -1;
          }
 
          // Verify the copied file exists and is executable
@@ -892,7 +991,7 @@ int install_to_profile(const char* store_path, const char* profile_name) {
         // char rm_cmd[PATH_MAX * 3];
         // snprintf(rm_cmd, sizeof(rm_cmd), "rm -rf %s/*", profile_path);
         // if (system(rm_cmd) != 0) {
-        //     fprintf(stderr, "Failed to clean existing profile: %s\n", strerror(errno));
+        //     fprintf(stderr, "Failed to clean existing profile: %s\n", profile_path);
         //     return -1;
         // }
     }
@@ -1357,5 +1456,41 @@ int switch_profile_generation(const char* profile_name, time_t timestamp) {
 
     printf("Switched profile '%s' to generation from %s", 
            profile_name, ctime(&timestamp));
+    return 0;
+}
+
+// Handle procboot libraries
+static int handle_procboot(const char* src_path, const char* dest_path) {
+    // Check if this is a procboot library
+    if (strstr(src_path, "procboot") == NULL) {
+        return 0;  // Not a procboot file, skip special handling
+    }
+
+    // Ensure 4K alignment for procboot libraries
+    struct stat st;
+    if (stat(src_path, &st) != 0) {
+        return -1;
+    }
+
+    // Create temporary aligned file
+    char tmp_path[PATH_MAX];
+    snprintf(tmp_path, PATH_MAX, "%s.aligned", dest_path);
+    
+    // Use dd to create aligned file with proper BS for MMU
+    char cmd[PATH_MAX * 3];
+    snprintf(cmd, sizeof(cmd), 
+        "dd if=%s of=%s bs=4096 conv=sync,noerror status=none && "
+        "mv %s %s", 
+        src_path, tmp_path, tmp_path, dest_path);
+    
+    int ret = system(cmd);
+    if (ret != 0) {
+        unlink(tmp_path);  // Cleanup on failure
+        return -1;
+    }
+
+    // Set proper permissions for early boot
+    chmod(dest_path, 0755);
+    
     return 0;
 }

@@ -19,6 +19,10 @@
 // Define the base store path
 #define NIX_STORE_PATH "/data/nix/store"
 
+// Define time synchronization constants
+#define MIN_VALID_TIMESTAMP 1746181969  // 2025-05-02 12:33
+#define MAX_GENERATIONS 50              // Maximum number of generations to keep
+
 // Structure to represent a store path
 typedef struct {
     char path[PATH_MAX];
@@ -42,6 +46,9 @@ int rollback_profile(const char* profile_name);
 int get_profile_generations(const char* profile_name, time_t** timestamps, int* count);
 int switch_profile_generation(const char* profile_name, time_t timestamp);
 
+// Time validation functions
+int verify_system_time(void);
+int cleanup_old_generations(const char* profile_name);
 
 // Structure to store profile information
 typedef struct {
