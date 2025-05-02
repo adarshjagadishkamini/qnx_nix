@@ -1,6 +1,15 @@
 # QNX compiler and flags
 QCC = qcc
-CFLAGS = -Vgcc_ntoaarch64le -g -Wall -Wno-parentheses
+# Debug build flags
+DEBUG_FLAGS = -g3 -O0 -DDEBUG
+# Release build flags
+RELEASE_FLAGS = -O2 -DNDEBUG
+
+# Default to release build
+EXTRA_FLAGS ?= $(RELEASE_FLAGS)
+
+# Base flags
+CFLAGS = -Vgcc_ntoaarch64le -Wall -Wno-parentheses $(EXTRA_FLAGS)
 LDFLAGS = -lsocket
 INCLUDES = -I$(QNX_TARGET)/usr/include
 
@@ -43,4 +52,26 @@ package: $(BINS)
 	cp config.ini pkg/etc/nix-store/
 	mkifs -v -r ./pkg nix-store.ifs
 
-.PHONY: all clean install package
+# Add debug target
+debug: EXTRA_FLAGS = $(DEBUG_FLAGS)
+debug: all
+
+# Add valgrind target
+valgrind-test: debug
+	valgrind --leak-check=full \
+		--show-leak-kinds=all \
+		--track-origins=yes \
+		--verbose \
+		--log-file=valgrind-out.txt \
+		./nix-store --init
+
+# Add more specific valgrind test targets
+valgrind-store-test: debug
+	valgrind --leak-check=full \
+		--show-leak-kinds=all \
+		--track-origins=yes \
+		--verbose \
+		--log-file=valgrind-store-out.txt \
+		./full_system_test.sh
+
+.PHONY: all clean install package debug valgrind-test valgrind-store-test
