@@ -871,10 +871,17 @@ static int create_library_symlinks(const char* store_path, const char* profile_l
             if (strstr(entry->d_name, ".so") == NULL)
                 continue;
 
-            char lib_src[PATH_MAX], lib_dest[PATH_MAX];
-            int ret_val = snprintf(lib_dest, PATH_MAX, "%s/%s", profile_lib_dir, entry->d_name);
-            if (ret_val < 0 || ret_val >= PATH_MAX) {
-                fprintf(stderr, "Path too long for library: %s\n", entry->d_name);
+            char lib_src[PATH_MAX];
+            int ret = snprintf(lib_src, sizeof(lib_src), "%s/%s", src_lib_dir, entry->d_name);
+            if (ret < 0 || ret >= sizeof(lib_src)) {
+                fprintf(stderr, "Source path too long: %s/%s\n", src_lib_dir, entry->d_name);
+                continue;
+            }
+
+            char lib_dest[PATH_MAX];
+            ret = snprintf(lib_dest, sizeof(lib_dest), "%s/%s", profile_lib_dir, entry->d_name);
+            if (ret < 0 || ret >= sizeof(lib_dest)) {
+                fprintf(stderr, "Destination path too long: %s/%s\n", profile_lib_dir, entry->d_name);
                 continue;
             }
             
@@ -906,9 +913,12 @@ static int create_library_symlinks(const char* store_path, const char* profile_l
         
         for (const char** dir_type = search_dirs; *dir_type != NULL; dir_type++) {
             char dep_lib_dir[PATH_MAX];
-            snprintf(dep_lib_dir, PATH_MAX, "%s/%s", all_deps[i], *dir_type);
-            printf("  Looking for libraries in: %s\n", dep_lib_dir);
-            
+            int ret = snprintf(dep_lib_dir, sizeof(dep_lib_dir), "%s/%s", all_deps[i], *dir_type);
+            if (ret < 0 || ret >= sizeof(dep_lib_dir)) {
+                fprintf(stderr, "Path too long for dependency: %s/%s\n", all_deps[i], *dir_type);
+                continue;
+            }
+
             DIR* dir = opendir(dep_lib_dir);
             if (!dir) continue;
 
@@ -920,9 +930,19 @@ static int create_library_symlinks(const char* store_path, const char* profile_l
                 if (strstr(entry->d_name, ".so") == NULL)
                     continue;
 
-                char lib_src[PATH_MAX], lib_dest[PATH_MAX];
-                snprintf(lib_src, PATH_MAX, "%s/%s/%s", all_deps[i], *dir_type, entry->d_name);
-                snprintf(lib_dest, PATH_MAX, "%s/%s", profile_lib_dir, entry->d_name);
+                char lib_src[PATH_MAX];
+                ret = snprintf(lib_src, sizeof(lib_src), "%s/%s/%s", all_deps[i], *dir_type, entry->d_name);
+                if (ret < 0 || ret >= sizeof(lib_src)) {
+                    fprintf(stderr, "Source path too long: %s/%s/%s\n", all_deps[i], *dir_type, entry->d_name);
+                    continue;
+                }
+
+                char lib_dest[PATH_MAX];
+                ret = snprintf(lib_dest, sizeof(lib_dest), "%s/%s", profile_lib_dir, entry->d_name);
+                if (ret < 0 || ret >= sizeof(lib_dest)) {
+                    fprintf(stderr, "Destination path too long: %s/%s\n", profile_lib_dir, entry->d_name);
+                    continue;
+                }
                 
                 printf("  Processing library: %s\n", entry->d_name);
                 printf("    Source: %s\n", lib_src);
