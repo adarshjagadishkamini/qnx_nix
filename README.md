@@ -188,6 +188,22 @@ exec env - \
 - Easy rollback support
 - Profile switching
 
+## Special File Handling
+
+### Procboot Libraries
+Procboot libraries require special handling due to their early boot requirements:
+- 4K memory alignment for MMU compatibility
+- Special permissions (0755) for boot access
+- Memory-mapped file handling
+- Early boot loading considerations
+
+### Time-Based Generation Management
+The package manager now includes robust time synchronization for profile generations:
+- Automatic validation of system time (minimum date: 2023-01-01)
+- High-resolution clock usage with fallback mechanism
+- Automatic cleanup of old generations (configurable via MAX_GENERATIONS)
+- Generation backup and rollback functionality
+
 ## Benefits
 
 1. Isolation
@@ -216,7 +232,7 @@ exec env - \
 2. Manual package registration
 3. No binary caching
 4. Limited to scanning ldd dependencies
-5. Time-based generations require accurate system time
+5. Time-based generations require accurate system time (manually set current time on boot)
 6. Store paths must be under /data/nix/store
 7. Root privileges required for installation
 
@@ -229,3 +245,4 @@ exec env - \
 5. User-space installation support
 6. Package building integration
 7. Resource manager daemon implementation
+8. Migrate to SQLlite3 database instead of the current flat file database implementation.
