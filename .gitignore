@@ -1,0 +1,13 @@
+# Ignore compiled binaries and objects
+*.o
+*.out
+nix-store
+nix-shell-qnx
+
+# Ignore documentation folder
+documentation/
+
+# Build and temp files
+*.tmp
+*.log
+valgrind-*
