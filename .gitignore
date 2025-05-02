@@ -1,7 +1,7 @@
 # Ignore compiled binaries and objects
 *.o
 *.out
-
+documentation/
 # Build and temp files
 *.tmp
 *.log
