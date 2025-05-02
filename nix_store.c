@@ -4,7 +4,7 @@
  #include <limits.h>
  #include <fcntl.h>
  #include <dirent.h>
- #include "nix_store_db.h"
+ #include <nix_store_db.h>
  #include <ctype.h>
  #include <sys/stat.h> // For mkdir, chmod
  #include <unistd.h>   // For symlink, execvp, chdir, unlink
@@ -30,7 +30,7 @@
  #endif
  
  // Time management for generations
- static int verify_system_time() {
+ int verify_system_time() {
      struct timespec ts;
      time_t current_time;
      
@@ -50,7 +50,7 @@
  }
  
 // Time synchronization and generation management
-static int cleanup_old_generations(const char* profile_name) {
+int cleanup_old_generations(const char* profile_name) {
     time_t* timestamps;
     int count;
     
@@ -78,7 +78,7 @@ static int cleanup_old_generations(const char* profile_name) {
 }
 
 // Enhanced create_generation with time validation and cleanup
-static int create_generation(const char* profile_name, time_t* timestamp) {
+int create_generation(const char* profile_name, time_t* timestamp) {
     // First verify system time
     if (verify_system_time() != 0) {
         fprintf(stderr, "Error: System time appears incorrect\n");
@@ -872,8 +872,11 @@ static int create_library_symlinks(const char* store_path, const char* profile_l
                 continue;
 
             char lib_src[PATH_MAX], lib_dest[PATH_MAX];
-            snprintf(lib_src, PATH_MAX, "%s/%s/%s", store_path, *dir_type, entry->d_name);
-            snprintf(lib_dest, PATH_MAX, "%s/%s", profile_lib_dir, entry->d_name);
+            int ret_val = snprintf(lib_dest, PATH_MAX, "%s/%s", profile_lib_dir, entry->d_name);
+            if (ret_val < 0 || ret_val >= PATH_MAX) {
+                fprintf(stderr, "Path too long for library: %s\n", entry->d_name);
+                continue;
+            }
             
             printf("  Processing package library: %s\n", entry->d_name);
             printf("    Source: %s\n", lib_src);
@@ -1460,7 +1463,7 @@ int switch_profile_generation(const char* profile_name, time_t timestamp) {
 }
 
 // Handle procboot libraries
-static int handle_procboot(const char* src_path, const char* dest_path) {
+int handle_procboot(const char* src_path, const char* dest_path) {
     // Check if this is a procboot library
     if (strstr(src_path, "procboot") == NULL) {
         return 0;  // Not a procboot file, skip special handling
