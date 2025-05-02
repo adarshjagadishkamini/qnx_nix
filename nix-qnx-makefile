@@ -9,9 +9,9 @@ RELEASE_FLAGS = -O2 -DNDEBUG
 EXTRA_FLAGS ?= $(RELEASE_FLAGS)
 
 # Base flags
-CFLAGS = -Vgcc_ntoaarch64le -Wall -Wno-parentheses $(EXTRA_FLAGS)
+CFLAGS = -Vgcc_ntoaarch64le -Wall -Wno-parentheses $(EXTRA_FLAGS) -I$(QNX_TARGET)/usr/include -I.
 LDFLAGS = -lsocket
-INCLUDES = -I$(QNX_TARGET)/usr/include
+INCLUDES = -I$(QNX_TARGET)/usr/include -I.
 
 # Source files and targets
 BINS = nix-store nix-shell-qnx

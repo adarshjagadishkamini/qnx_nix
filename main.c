@@ -212,7 +212,7 @@ int main(int argc, char* argv[]) {
         return 0;
     }
 
-    /Profile Listing and Information
+    //Profile Listing and Information
         else if (strcmp(argv[1], "--list-profiles") == 0) {
         // show profiles
         int count;

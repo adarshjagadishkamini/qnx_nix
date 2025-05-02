@@ -188,22 +188,6 @@ exec env - \
 - Easy rollback support
 - Profile switching
 
-## Special File Handling
-
-### Procboot Libraries
-Procboot libraries require special handling due to their early boot requirements:
-- 4K memory alignment for MMU compatibility
-- Special permissions (0755) for boot access
-- Memory-mapped file handling
-- Early boot loading considerations
-
-### Time-Based Generation Management
-The package manager now includes robust time synchronization for profile generations:
-- Automatic validation of system time (minimum date: 2023-01-01)
-- High-resolution clock usage with fallback mechanism
-- Automatic cleanup of old generations (configurable via MAX_GENERATIONS)
-- Generation backup and rollback functionality
-
 ## Benefits
 
 1. Isolation

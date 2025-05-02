@@ -49,6 +49,8 @@ int switch_profile_generation(const char* profile_name, time_t timestamp);
 // Time validation functions
 int verify_system_time(void);
 int cleanup_old_generations(const char* profile_name);
+int create_generation(const char* profile_name, time_t* timestamp);
+int handle_procboot(const char* src_path, const char* dest_path);
 
 // Structure to store profile information
 typedef struct {

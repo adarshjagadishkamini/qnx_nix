@@ -54,14 +54,25 @@ static char* find_store_path_for_util(const char* util_path) {
 }
 
 // set up shell env
-static void setup_environment(const char* profile_path) {
-    char lib_path[PATH_MAX];
+static int setup_environment(const char* profile_path) {
     char bin_path[PATH_MAX];
+    char lib_path[PATH_MAX];
     char paths[PATH_MAX * 4] = "";  // Increased size for multiple paths
-    
-    // Start with profile's bin directory
-    snprintf(bin_path, sizeof(bin_path), "%s/bin", profile_path);
+
+    // Construct bin path with overflow check
+    int ret = snprintf(bin_path, sizeof(bin_path), "%s/bin", profile_path);
+    if (ret < 0 || ret >= sizeof(bin_path)) {
+        fprintf(stderr, "Profile bin path too long\n");
+        return -1;
+    }
     strcat(paths, bin_path);
+
+    // Construct lib path with overflow check
+    ret = snprintf(lib_path, sizeof(lib_path), "%s/lib", profile_path);
+    if (ret < 0 || ret >= sizeof(lib_path)) {
+        fprintf(stderr, "Profile lib path too long\n");
+        return -1;
+    }
 
     // Add essential utilities from store
     for (int i = 0; essential_utils[i] != NULL; i++) {
@@ -80,9 +91,6 @@ static void setup_environment(const char* profile_path) {
             fprintf(stderr, "Warning: Could not find store path for %s\n", essential_utils[i]);
         }
     }
-
-    // Set up library path
-    snprintf(lib_path, sizeof(lib_path), "%s/lib", profile_path);
 
     // Clear and set restricted environment
     char* term = getenv("TERM");
@@ -103,6 +111,8 @@ static void setup_environment(const char* profile_path) {
     printf("  PATH=%s\n", paths);
     printf("  LD_LIBRARY_PATH=%s\n", lib_path);
     printf("  NIX_PROFILE=%s\n", profile_path);
+
+    return 0;
 }
 
 static void print_welcome_msg(const char* profile_name) {
@@ -128,7 +138,9 @@ int main(int argc, char* argv[]) {
     }
 
     print_welcome_msg(argv[1]);
-    setup_environment(profile_path);
+    if (setup_environment(profile_path) != 0) {
+        return 1;
+    }
 
     // Launch shell using bash instead of ksh
     char* shell_args[] = {"/system/bin/bash", NULL};
