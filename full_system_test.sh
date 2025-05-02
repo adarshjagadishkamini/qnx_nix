@@ -48,7 +48,9 @@ echo "4.2 Installing packages to profiles..."
 # Profile 3: multiple packages
 ./nix-store --install $HEAD_PATH test3
 ./nix-store --install $TAIL_PATH test3
-./nix-store --install $LS_PATH test2
+
+#Add more package to profile 1
+#./nix-store --install $LS_PATH test2
 ./nix-store --install $SL_PATH test1
 
 echo "4.3 Verifying profile contents..."
@@ -64,7 +66,6 @@ echo "5.1 Creating new generations..."
 ./nix-store --list-generations test3
 
 #echo "5.2 Testing generation switching..."
-#FIRST_GEN=$(./nix-store --list-generations test3 | head -n1 | awk '{print $1}')
 ./nix-store --switch-generation test3 
 #ls -l /data/nix/profiles/test3/bin/
 
