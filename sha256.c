@@ -1,6 +1,4 @@
-/*
- * sha256.c - Implementation of SHA-256 hash functions
- */
+// sha256 hash implementation
 #include "sha256.h"
 #include <stdlib.h>
 #include <stdio.h>
