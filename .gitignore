@@ -1,0 +1,6 @@
+*.o
+CHANGELOG.md
+original_working_directory/
+*.tex
+.nix-db
+Teststeps.txt
